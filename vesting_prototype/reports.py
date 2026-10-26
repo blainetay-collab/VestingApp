@@ -43,7 +43,10 @@ def assumptions_table(meta: dict) -> pd.DataFrame:
         ("Annual volatility assumption", meta["vol_text"] if meta["scenario"].startswith("Range") else "n/a"),
         ("Reporting currency", "USD; local currency shown using the FX rates in the data (illustrative)"),
         ("Filters applied", meta.get("filters") or "None"),
+        ("View", meta.get("view", "Current schedule")),
     ]
+    if meta.get("levers"):
+        rows.append(("What-if assumptions", meta["levers"]))
     if meta.get("data_note"):
         rows.append(("Data note", meta["data_note"]))
     return pd.DataFrame(rows, columns=["Assumption", "Value"])
@@ -87,7 +90,8 @@ def build_excel(events: pd.DataFrame, summaries: dict, meta: dict,
         ws = wb.add_worksheet("Summary")
         xw.sheets["Summary"] = ws
         ws.write(0, 0, f"Upcoming Vesting Events - {meta.get('company', '')}", title)
-        ws.write(1, 0, f"Report date {meta['report_date']} | {meta['window']} | Scenario: {meta['scenario']}", base)
+        ws.write(1, 0, f"Report date {meta['report_date']} | {meta['window']} | Scenario: {meta['scenario']} | "
+                       f"{meta.get('view', 'Current schedule')}", base)
         ws.write(3, 0, "Events", bold); ws.write_number(3, 1, len(events), num)
         ws.write(4, 0, "Shares vesting", bold); ws.write_number(4, 1, float(events["shares_vesting"].sum()), num)
         ws.write(5, 0, "Estimated value (USD)", bold); ws.write_number(5, 1, float(events["est_value_usd"].sum()), money)
@@ -167,7 +171,8 @@ def build_pdf(events: pd.DataFrame, summaries: dict, meta: dict,
 
     el = [Paragraph(f"Upcoming Vesting Events - {meta.get('company', '')}", styles["Title"]),
           Paragraph(f"Report date {meta['report_date']} &nbsp;|&nbsp; {meta['window']} &nbsp;|&nbsp; "
-                    f"Scenario: {meta['scenario']}", styles["BodyText"]), Spacer(1, 8)]
+                    f"Scenario: {meta['scenario']} &nbsp;|&nbsp; {meta.get('view', 'Current schedule')}",
+                    styles["BodyText"]), Spacer(1, 8)]
 
     kpi = [["Events", "Shares vesting", "Estimated value (USD)"],
            [f"{len(events):,}", f"{events['shares_vesting'].sum():,.0f}", f"${events['est_value_usd'].sum():,.0f}"]]

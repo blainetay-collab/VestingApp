@@ -1,24 +1,30 @@
 # Equity Vesting Tracker (prototype)
 
-Reads RSU grant data for many companies, finds every upcoming vesting event, estimates the
-share price and value at each vest date, charts vesting by month, and produces client-ready
-Excel / PDF reports. All data is synthetic.
+Reads RSU grant data for many companies, finds every upcoming vesting event, values it at each vest
+date, charts vesting by month, and produces client-ready Excel / PDF reports. All data is synthetic.
 
 ## Run it
     pip install -r requirements.txt
     streamlit run app.py
 (On Windows: `py -m pip install -r requirements.txt` then `py -m streamlit run app.py`)
 
-## What's in the app
-- Sidebar filters: company, country, department, employee name/ID. Every tab and every export follows them.
-- Events: filtered event table with Export CSV / Export Excel (matches the active filters).
-- BI: line chart of shares or estimated value vesting per month (12-48 months), split by
-  company / country / department, optional cumulative view.
-- Summary, By employee, Data quality, What-if (termination / acceleration), Report (Excel + PDF).
+## Two views
+- **Current schedule**: what is scheduled to vest, valued at today's share prices.
+- **What-if**: change things and compare against the current schedule. Levers:
+  - Prices: a price path (flat / growth / bear-base-bull range) and a one-off change to today's prices.
+  - Attrition: an assumed annual rate, applied as an expected value to unvested shares.
+  - People events: leaves (shares forfeit or accelerate) and leave of absence (vesting paused for N months),
+    for specific employees or everyone matching the filters.
+  - One-click presets: market down 20%, market up 20%, 15% attrition.
+  Summary cards show the change against current, and the BI chart plots both lines.
+
+## Layout
+Filters sit in the page (not a sidebar), so they are visible on a phone. Every tab and every
+export follows them. Tabs: BI, Events, Breakdown, People, Report, Data.
 
 ## Files
     app.py             Streamlit screen
-    engine.py          vesting + price-scenario logic, validation, summaries, monthly series (no UI code)
+    engine.py          vesting + price logic, what-if levers, validation, summaries, monthly series (no UI code)
     reports.py         Excel and PDF report builders, filtered data export
     generate_data.py   regenerates the synthetic dataset (fixed seed); edit COMPANIES to resize it
     data/              companies, employees, grants, vesting_tranches, vesting_schedules,
@@ -27,12 +33,11 @@ Excel / PDF reports. All data is synthetic.
 ## Dataset
 8 fictional companies, ~980 employees in 14 countries, ~3,100 grants, ~52,000 vesting tranches.
 
-## Assumptions (from the PRD)
-- RSUs only; reporting currency USD with a local-currency column.
-- Unvested shares forfeit on termination; death / disability can accelerate (What-if tab).
-- Price scenarios are illustrative: Flat, Growth, or Range (growth path +/- one standard deviation
-  of annual volatility), using each company's own assumptions unless overridden. Not predictions.
-- Share counts are gross, before tax withholding.
+## Assumptions
+- RSUs only; reporting currency USD with a local-currency column. Share counts are gross, before tax withholding.
+- Price scenarios and attrition are illustrative, not predictions.
+- Pausing vesting during leave is a what-if. Whether a real plan pauses vesting varies by plan and country.
+- Reports exported from the What-if view are labeled as hypothetical.
 
 ## Swapping in a real export
 engine.load_data() is the only place that reads files. Replace it (or add an adapter) to map a

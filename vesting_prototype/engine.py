@@ -11,7 +11,9 @@ regenerate_tranches(grants, schedules)   -> vesting events rebuilt from schedule
 upcoming_events(data, ...)               -> upcoming vesting events with price/value estimates
 summarize(events)                        -> by-month / by-company / by-country / by-employee tables
 monthly_series(events, ...)              -> month-by-month series for the BI line chart
-simulate_termination(tranches, ...)      -> what-if: forfeit or accelerate an employee's unvested shares
+simulate_termination / simulate_leave    -> what-if: forfeit, accelerate or pause an employee's unvested shares
+apply_actions(tranches, actions)         -> apply a list of what-if people events
+diff_events(current, whatif)             -> which vesting events were forfeited, added or moved
 """
 from __future__ import annotations
 
@@ -149,7 +151,7 @@ def project_price(price0, years, scenario: str, annual_growth=0.0, annual_vol=0.
 # Upcoming events
 # --------------------------------------------------------------------------
 EVENT_COLUMNS = ["vest_date", "days_until", "month", "company", "ticker", "employee_id", "full_name",
-                 "department", "country", "tax_residency_country", "grant_id", "award_type",
+                 "department", "country", "tax_residency_country", "tranche_id", "grant_id", "award_type",
                  "vesting_schedule_id", "shares_vesting", "est_price_usd", "est_price_low", "est_price_high",
                  "est_value_usd", "est_value_low", "est_value_high", "local_currency", "est_value_local",
                  "status", "flags"]
@@ -157,12 +159,18 @@ EVENT_COLUMNS = ["vest_date", "days_until", "month", "company", "ticker", "emplo
 
 def upcoming_events(data: dict[str, pd.DataFrame], as_of, window_days: int = 90,
                     scenario: str = "Flat", annual_growth: float | None = None,
-                    annual_vol: float | None = None, tranches: pd.DataFrame | None = None) -> pd.DataFrame:
+                    annual_vol: float | None = None, tranches: pd.DataFrame | None = None,
+                    price_shock: float = 0.0, attrition: float = 0.0) -> pd.DataFrame:
     """Every vesting event in (as_of, as_of + window_days] with estimated price and value.
 
     annual_growth / annual_vol: pass numbers to override every company, or leave as
     None to use each company's own assumptions from market_data.csv.
-    Pass `tranches` to override the stored vesting events (used by the what-if).
+    tranches   : override the stored vesting events (used by the what-if).
+    price_shock: one-off change to every starting price, e.g. -0.10 for 10% lower.
+    attrition  : assumed annual share of staff who leave, e.g. 0.08. Unvested shares are
+                 scaled by the chance the person is still employed at each vest date
+                 (an expected value, so shares can be fractional). Accelerated events are
+                 not scaled.
     """
     as_of = pd.Timestamp(as_of)
     end = as_of + pd.Timedelta(days=int(window_days))
@@ -182,6 +190,14 @@ def upcoming_events(data: dict[str, pd.DataFrame], as_of, window_days: int = 90,
     ev = ev.merge(data["fx"][["currency", "units_per_usd"]], left_on="local_currency",
                   right_on="currency", how="left").drop(columns="currency")
 
+    ev["days_until"] = (ev["vest_date"] - as_of).dt.days
+    if attrition:
+        yrs_out = ev["days_until"].clip(lower=0).to_numpy() / 365.25
+        survive = np.where(ev["status"] == "Accelerated", 1.0, (1 - attrition) ** yrs_out)
+        ev["shares_vesting"] = (ev["shares_vesting"] * survive).round(2)
+    if price_shock:
+        ev["price_usd"] = ev["price_usd"] * (1 + price_shock)
+
     years = (ev["vest_date"] - ev["price_date"]).dt.days.clip(lower=0).to_numpy() / 365.25
     g = ev["assumed_annual_growth"].to_numpy() if annual_growth is None else annual_growth
     v = ev["annual_volatility"].to_numpy() if annual_vol is None else annual_vol
@@ -191,7 +207,6 @@ def upcoming_events(data: dict[str, pd.DataFrame], as_of, window_days: int = 90,
     ev["est_value_low"] = (ev["shares_vesting"] * ev["est_price_low"]).round(2)
     ev["est_value_high"] = (ev["shares_vesting"] * ev["est_price_high"]).round(2)
     ev["est_value_local"] = (ev["est_value_usd"] * ev["units_per_usd"]).round(2)
-    ev["days_until"] = (ev["vest_date"] - as_of).dt.days
     ev["month"] = ev["vest_date"].dt.to_period("M").astype(str)
     ev["flags"] = _flags_vectorized(ev)
     return ev[EVENT_COLUMNS].sort_values(["vest_date", "company", "employee_id"]).reset_index(drop=True)
@@ -253,18 +268,78 @@ def monthly_series(events: pd.DataFrame, metric: str = "shares_vesting", by: str
 # --------------------------------------------------------------------------
 # What-if: termination / acceleration
 # --------------------------------------------------------------------------
-def simulate_termination(tranches: pd.DataFrame, employee_id: str, termination_date,
+def _ids(employee_ids) -> list:
+    return [employee_ids] if isinstance(employee_ids, str) else list(employee_ids)
+
+
+def simulate_termination(tranches: pd.DataFrame, employee_ids, termination_date,
                          accelerate: bool = False) -> pd.DataFrame:
-    """Return a copy of tranches with the employee's unvested events after
+    """Return a copy of tranches with the employees' unvested events after
     termination_date either forfeited or accelerated (vesting on that date).
-    Death / disability are the typical acceleration cases; everything else
-    normally forfeits. Change-in-control is out of scope for phase 1."""
+    employee_ids: one id or a list. Death / disability are the typical acceleration
+    cases; everything else normally forfeits. Change-in-control is out of scope for phase 1."""
     t = tranches.copy()
     td = pd.Timestamp(termination_date)
-    mask = (t["employee_id"] == employee_id) & (t["status"] == "Unvested") & (t["vest_date"] > td)
+    mask = t["employee_id"].isin(_ids(employee_ids)) & (t["status"] == "Unvested") & (t["vest_date"] > td)
     if accelerate:
         t.loc[mask, "vest_date"] = td
         t.loc[mask, "status"] = "Accelerated"
     else:
         t.loc[mask, "status"] = "Forfeited"
     return t
+
+
+def simulate_leave(tranches: pd.DataFrame, employee_ids, start_date, months: int) -> pd.DataFrame:
+    """Pause vesting during a leave of absence: every unvested event after start_date
+    moves out by `months` (the schedule is tolled). Whether a given plan or country
+    actually pauses vesting varies, so this is a what-if, not a rule."""
+    t = tranches.copy()
+    sd = pd.Timestamp(start_date)
+    mask = t["employee_id"].isin(_ids(employee_ids)) & (t["status"] == "Unvested") & (t["vest_date"] > sd)
+    if mask.any():
+        t.loc[mask, "vest_date"] = t.loc[mask, "vest_date"] + pd.DateOffset(months=int(months))
+    return t
+
+
+ACTION_KINDS = {
+    "terminate_forfeit": "Leaves - unvested shares forfeit",
+    "terminate_accelerate": "Leaves - unvested shares accelerate (death / disability)",
+    "leave": "Leave of absence - vesting paused",
+}
+
+
+def apply_actions(tranches: pd.DataFrame, actions) -> pd.DataFrame:
+    """Apply what-if people events in order. Each action is a dict with
+    kind (see ACTION_KINDS), employee_ids, date, and months (for leave)."""
+    t = tranches
+    for a in actions:
+        if a["kind"] == "leave":
+            t = simulate_leave(t, a["employee_ids"], a["date"], a.get("months", 3))
+        else:
+            t = simulate_termination(t, a["employee_ids"], a["date"], a["kind"] == "terminate_accelerate")
+    return t
+
+
+def diff_events(current: pd.DataFrame, whatif: pd.DataFrame) -> pd.DataFrame:
+    """Vesting events whose timing changed between the current schedule and the what-if:
+    Removed (forfeited or pushed out of range), Added (accelerated or pushed in), or Moved.
+    Changes caused only by price or attrition assumptions are not listed here."""
+    cols = ["tranche_id", "employee_id", "full_name", "company", "country", "grant_id"]
+    c = current[cols + ["vest_date", "shares_vesting", "est_value_usd"]].rename(columns={
+        "vest_date": "current_date", "shares_vesting": "current_shares", "est_value_usd": "current_value"})
+    w = whatif[["tranche_id", "vest_date", "shares_vesting", "est_value_usd"]].rename(columns={
+        "vest_date": "whatif_date", "shares_vesting": "whatif_shares", "est_value_usd": "whatif_value"})
+    m = c.merge(w, on="tranche_id", how="outer", indicator=True)
+    # events only in the what-if still need their identity columns
+    extra = whatif[cols].set_index("tranche_id")
+    for col in cols[1:]:
+        m[col] = m[col].where(m[col].notna(), m["tranche_id"].map(extra[col]))
+    m["change"] = np.select(
+        [m["_merge"] == "left_only", m["_merge"] == "right_only",
+         m["current_date"] != m["whatif_date"]],
+        ["Removed", "Added", "Moved"], default="Unchanged")
+    m = m[m["change"] != "Unchanged"].copy()
+    m["value_change"] = m["whatif_value"].fillna(0) - m["current_value"].fillna(0)
+    out = ["change", "full_name", "employee_id", "company", "country", "grant_id", "current_date", "whatif_date",
+           "current_shares", "whatif_shares", "value_change"]
+    return m[out].sort_values("value_change", key=lambda x: x.abs(), ascending=False).reset_index(drop=True)
