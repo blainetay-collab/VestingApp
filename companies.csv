@@ -1,0 +1,9 @@
+company_id,company_name,ticker,industry,hq_country
+C001,Acme Global Inc.,ACME,Technology,United States
+C002,Northwind Robotics,NWRB,Industrial Tech,Germany
+C003,Helios Energy,HLOS,Energy,United Kingdom
+C004,Bluepeak Software,BPKS,Software,United States
+C005,Meridian Health,MRDH,Healthcare,Canada
+C006,Orbit Logistics,ORBT,Logistics,Singapore
+C007,Cobalt Financial,CBFT,Financial Services,Ireland
+C008,Verdant Foods,VRDF,Consumer,Australia
