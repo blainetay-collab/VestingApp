@@ -1,9 +1,0 @@
-ticker,company,price_usd,price_date,annual_volatility,assumed_annual_growth
-ACME,Acme Global Inc.,84.5,2026-10-23,0.35,0.08
-NWRB,Northwind Robotics,41.2,2026-10-23,0.42,0.1
-HLOS,Helios Energy,22.8,2026-10-23,0.38,0.05
-BPKS,Bluepeak Software,156.3,2026-10-23,0.45,0.12
-MRDH,Meridian Health,63.4,2026-10-23,0.28,0.07
-ORBT,Orbit Logistics,18.9,2026-10-23,0.33,0.06
-CBFT,Cobalt Financial,112.7,2026-10-23,0.25,0.06
-VRDF,Verdant Foods,37.5,2026-10-23,0.22,0.04
