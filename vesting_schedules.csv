@@ -1,5 +1,0 @@
-vesting_schedule_id,description,total_months,cliff_months,interval_months
-4Y_1Y_CLIFF_QTR,"4 years, 1-year cliff, then quarterly",48,12,3
-4Y_1Y_CLIFF_MONTHLY,"4 years, 1-year cliff, then monthly",48,12,1
-3Y_1Y_CLIFF_ANNUAL,"3 years, 1-year cliff, then annually",36,12,12
-4Y_ANNUAL,"4 years, annual vesting (25% per year)",48,12,12
