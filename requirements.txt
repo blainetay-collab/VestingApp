@@ -1,6 +1,0 @@
-streamlit>=1.35
-pandas>=2.0
-numpy
-xlsxwriter
-reportlab
-openpyxl
