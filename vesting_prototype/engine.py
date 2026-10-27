@@ -373,3 +373,48 @@ def whatif_steps(data: dict[str, pd.DataFrame], as_of, window_days: int, scenari
         steps.append(("Price path", run(scenario=scenario, annual_growth=annual_growth, annual_vol=annual_vol,
                                          tranches=tranches, attrition=attrition, price_shock=price_shock)))
     return steps
+
+
+# --------------------------------------------------------------------------
+# One employee: grant-by-grant view
+# --------------------------------------------------------------------------
+def grant_summary(data: dict[str, pd.DataFrame], employee_id: str, events: pd.DataFrame) -> pd.DataFrame:
+    """One row per grant for one person: how much has vested, is still to come, or was forfeited,
+    plus the next vest. `events` is the upcoming-events table for the view being shown
+    (current schedule or what-if); vested and forfeited history always comes from the stored data."""
+    g = data["grants"][data["grants"]["employee_id"] == employee_id]
+    t = data["tranches"][data["tranches"]["employee_id"] == employee_id]
+    out = g[["grant_id", "award_type", "ticker", "grant_date", "vesting_schedule_id", "total_shares"]] \
+        .copy().set_index("grant_id")
+    for status, col in (("Vested", "vested_shares"), ("Forfeited", "forfeited_shares")):
+        out[col] = t[t["status"] == status].groupby("grant_id")["shares_vesting"].sum()
+    e = events[events["employee_id"] == employee_id].sort_values("vest_date")
+    if e.empty:
+        out["upcoming_shares"], out["upcoming_value_usd"], out["upcoming_events"] = 0.0, 0.0, 0
+        out["next_vest_date"], out["next_vest_shares"] = pd.NaT, 0.0
+    else:
+        agg = e.groupby("grant_id").agg(upcoming_shares=("shares_vesting", "sum"),
+                                        upcoming_value_usd=("est_value_usd", "sum"),
+                                        upcoming_events=("tranche_id", "count"))
+        first = e.groupby("grant_id").first()[["vest_date", "shares_vesting"]] \
+            .rename(columns={"vest_date": "next_vest_date", "shares_vesting": "next_vest_shares"})
+        out = out.join(agg).join(first)
+    for col in ("vested_shares", "forfeited_shares", "upcoming_shares", "upcoming_value_usd",
+                "upcoming_events", "next_vest_shares"):
+        out[col] = out[col].fillna(0)
+    out["pct_vested"] = (out["vested_shares"] / out["total_shares"]).where(out["total_shares"] > 0, 0)
+    return out.reset_index().sort_values("grant_date").reset_index(drop=True)
+
+
+def employee_schedule(data: dict[str, pd.DataFrame], employee_id: str, events: pd.DataFrame) -> pd.DataFrame:
+    """Every vesting event for one person on one timeline: past (Vested, Forfeited) from the stored data,
+    upcoming from `events`. Status is Vested, Upcoming or Forfeited."""
+    t = data["tranches"]
+    past = t[(t["employee_id"] == employee_id) & t["status"].isin(["Vested", "Forfeited"])][
+        ["tranche_id", "grant_id", "vest_date", "shares_vesting", "status"]].copy()
+    up = events[events["employee_id"] == employee_id][
+        ["tranche_id", "grant_id", "vest_date", "shares_vesting", "est_price_usd", "est_value_usd", "flags"]].copy()
+    up["status"] = "Upcoming"
+    out = pd.concat([past, up], ignore_index=True)
+    out["flags"] = out["flags"].fillna("")
+    return out.sort_values(["vest_date", "grant_id"]).reset_index(drop=True)

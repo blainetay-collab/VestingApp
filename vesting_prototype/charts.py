@@ -135,3 +135,84 @@ def bullet_chart(names, shown, baseline=None, is_money: bool = True):
                                        "tooltip": [{"field": "baseline", "type": "quantitative", "title": "Current",
                                                     "format": "$,.0f" if is_money else ",.0f"}]}})
     return df, {"height": height, "config": _CONFIG, "layer": layers}
+
+
+# ---------------------------------------------------------------- one employee
+PAST, UPCOMING, FORFEIT = "#64748B", ACCENT, "#EA580C"
+STATUS_SCALE = {"domain": ["Vested", "Upcoming", "Forfeited"], "range": [PAST, UPCOMING, FORFEIT]}
+
+
+def grant_timeline(sched: pd.DataFrame, today: pd.Timestamp, height: int | None = None):
+    """One row per grant. A line spans the grant's vesting period, a dot marks each vest (bigger = more shares),
+    and a dashed orange line marks today. sched needs: grant_id, vest_date, shares_vesting, status."""
+    df = sched[["grant_id", "vest_date", "shares_vesting", "status"]].copy()
+    n = df["grant_id"].nunique()
+    y = {"field": "grant_id", "type": "nominal", "sort": None, "axis": {"title": None, "grid": False}}
+    spec = {
+        "height": height or max(110, 48 * n + 40), "config": _CONFIG,
+        "layer": [
+            {"mark": {"type": "rule", "color": BASE_GREY, "strokeWidth": 2, "opacity": 0.6},
+             "encoding": {"y": y, "x": {"field": "vest_date", "type": "temporal", "aggregate": "min",
+                                        "axis": {"title": None, "format": "%b %Y", "grid": False}},
+                          "x2": {"field": "vest_date", "aggregate": "max"}}},
+            {"mark": {"type": "point", "filled": True, "opacity": 0.9, "stroke": "#FFFFFF", "strokeWidth": 0.5},
+             "encoding": {"y": y, "x": {"field": "vest_date", "type": "temporal"},
+                          "size": {"field": "shares_vesting", "type": "quantitative", "legend": None,
+                                   "scale": {"range": [30, 380]}},
+                          "color": {"field": "status", "type": "nominal", "scale": STATUS_SCALE},
+                          "tooltip": [{"field": "grant_id", "title": "Grant"},
+                                      {"field": "vest_date", "type": "temporal", "title": "Vest date",
+                                       "format": "%b %d, %Y"},
+                                      {"field": "shares_vesting", "type": "quantitative", "title": "Shares",
+                                       "format": ",.0f"},
+                                      {"field": "status", "title": "Status"}]}},
+            {"mark": {"type": "rule", "color": FORFEIT, "strokeDash": [4, 4], "strokeWidth": 1.5},
+             "encoding": {"x": {"datum": {"year": today.year, "month": today.month, "date": today.day},
+                                "type": "temporal"}}},
+        ],
+    }
+    return df, spec
+
+
+def vest_stack(upcoming: pd.DataFrame, is_money: bool, height: int = 260):
+    """Upcoming vests by month, stacked by grant. upcoming needs: vest_date, grant_id, value."""
+    df = upcoming[["vest_date", "grant_id", "value"]].copy()
+    spec = {
+        "height": height, "config": _CONFIG,
+        "mark": {"type": "bar", "cornerRadiusTopLeft": 2, "cornerRadiusTopRight": 2},
+        "encoding": {
+            "x": {"field": "vest_date", "type": "temporal", "timeUnit": "yearmonth",
+                  "axis": {"title": None, "format": "%b %y", "labelAngle": 0, "labelOverlap": True, "grid": False}},
+            "y": {"field": "value", "type": "quantitative", "aggregate": "sum",
+                  "axis": {"title": None, "format": MONEY_AXIS if is_money else "~s"}},
+            "color": {"field": "grant_id", "type": "nominal", "scale": {"range": SPLIT_PALETTE}},
+            "tooltip": [{"field": "vest_date", "type": "temporal", "timeUnit": "yearmonth", "title": "Month",
+                         "format": "%B %Y"},
+                        {"field": "grant_id", "title": "Grant"},
+                        {"field": "value", "type": "quantitative", "aggregate": "sum", "title": "Amount",
+                         "format": "$,.0f" if is_money else ",.0f"}]},
+    }
+    return df, spec
+
+
+def grant_progress(summary: pd.DataFrame):
+    """Horizontal stacked bar per grant: shares already vested, still to come, and forfeited."""
+    rows = []
+    for r in summary.itertuples():
+        for ord_, (part, val) in enumerate((("Vested", r.vested_shares), ("Upcoming", r.upcoming_shares),
+                                            ("Forfeited", r.forfeited_shares))):
+            rows.append({"grant_id": r.grant_id, "part": part, "shares": float(val), "ord": ord_})
+    df = pd.DataFrame(rows)
+    spec = {
+        "height": max(90, 34 * len(summary) + 40), "config": _CONFIG,
+        "mark": {"type": "bar", "size": 20},
+        "encoding": {
+            "y": {"field": "grant_id", "type": "nominal", "sort": None, "axis": {"title": None, "grid": False}},
+            "x": {"field": "shares", "type": "quantitative", "aggregate": "sum",
+                  "axis": {"title": None, "format": "~s"}},
+            "color": {"field": "part", "type": "nominal", "scale": STATUS_SCALE},
+            "order": {"field": "ord", "type": "quantitative"},
+            "tooltip": [{"field": "grant_id", "title": "Grant"}, {"field": "part", "title": "Part"},
+                        {"field": "shares", "type": "quantitative", "title": "Shares", "format": ",.0f"}]},
+    }
+    return df, spec

@@ -84,6 +84,11 @@ st.markdown(
     .vc-row{display:flex;justify-content:space-between;align-items:baseline;margin-top:.35rem}
     .vc-val{font-size:1.15rem;font-weight:700}
     .vc-flag{font-size:.72rem;margin-top:.3rem;color:#EA580C}
+    .vgrid.one{grid-template-columns:1fr;margin-bottom:.15rem}
+    .kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:.5rem .9rem;margin:.3rem 0 .8rem 0}
+    .kv-i{border-bottom:1px solid rgba(128,128,128,.25);padding:.25rem 0}
+    .kv-k{font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;opacity:.6}
+    .kv-v{font-size:.95rem;font-weight:550;word-break:break-word}
     /* keep the 2 x 2 preset buttons side by side on phones */
     .st-key-presets [data-testid="stHorizontalBlock"]{flex-wrap:nowrap !important;gap:.5rem}
     .st-key-presets [data-testid="stColumn"]{min-width:0 !important;width:auto !important;flex:1 1 0 !important}
@@ -143,9 +148,9 @@ def hero_html(kicker: str, value: str, sub: str, delta: str | None, rng: str | N
             f'<div class="hero-s">{hx(sub)}</div>{d}{r}</div>')
 
 
-def cards_html(df: pd.DataFrame, share_decimals: int = 0) -> str:
+def cards_html(df: pd.DataFrame, share_decimals: int = 0, single: bool = False) -> str:
     """One card per vesting event; wraps into a grid on desktop and a single column on a phone."""
-    out = ['<div class="vgrid">']
+    out = ['<div class="vgrid one">' if single else '<div class="vgrid">']
     for r in df.itertuples():
         when = f"{r.vest_date:%b %d, %Y}"
         days = "today" if r.days_until <= 0 else f"in {r.days_until} day{'s' if r.days_until != 1 else ''}"
@@ -158,6 +163,12 @@ def cards_html(df: pd.DataFrame, share_decimals: int = 0) -> str:
             f'<span class="vc-val">{hx(money(r.est_value_usd))}</span></div>{flag}</div>')
     out.append("</div>")
     return "".join(out)
+
+
+def kv_html(pairs) -> str:
+    return '<div class="kv">' + "".join(
+        f'<div class="kv-i"><div class="kv-k">{hx(k)}</div><div class="kv-v">{hx(v)}</div></div>'
+        for k, v in pairs) + "</div>"
 
 
 def chips_html(parts: list[str]) -> str:
@@ -264,6 +275,32 @@ market = data["market"]
 emp_lookup = data["employees"].set_index("employee_id")
 
 
+def open_emp(emp):
+    ss["emp_view"] = emp
+
+
+def close_emp():
+    ss["emp_view"] = None
+
+
+# Widgets that are not drawn on a given run lose their saved value. These live on screens that are hidden while
+# an employee profile is open, so re-save them to keep the user's choices when they come back.
+for _k in ("o_horizon", "o_split", "o_measure", "o_cumul", "ev_layout", "data_dir"):
+    if _k in ss:
+        ss[_k] = ss[_k]
+
+
+def cards_with_open(df: pd.DataFrame, prefix: str, share_decimals: int = 0):
+    """Cards in two columns (one on a phone), each with a button that opens that person's profile."""
+    rows = list(df.itertuples())
+    for i in range(0, len(rows), 2):
+        for col, r in zip(st.columns(2), rows[i:i + 2]):
+            with col:
+                st.markdown(cards_html(df.loc[[r.Index]], share_decimals, single=True), unsafe_allow_html=True)
+                st.button(f"Open {r.full_name}", key=f"{prefix}_{r.tranche_id}", on_click=open_emp,
+                          kwargs={"emp": r.employee_id}, use_container_width=True)
+
+
 def clear_filters():
     ss["f_company"], ss["f_country"], ss["f_dept"], ss["f_search"] = [], [], [], ""
 
@@ -316,7 +353,8 @@ if departments:
 if search.strip():
     filter_parts.append(f"Employee contains '{search.strip()}'")
 filters_text = "; ".join(filter_parts) or "None"
-st.markdown(chips_html(filter_parts), unsafe_allow_html=True)
+if not ss.get("emp_view"):
+    st.markdown(chips_html(filter_parts), unsafe_allow_html=True)
 
 
 def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
@@ -339,7 +377,7 @@ cur_all = get_current_events(data_dir, as_of_ts)
 # ------------------------------------------------------------------ what-if builder
 scenario, g_arg, v_arg, shock, attr = "Flat", None, None, 0.0, 0.0
 if is_whatif:
-    with st.container(border=True):
+    with (st.expander("What-if settings", expanded=False) if ss.get("emp_view") else st.container(border=True)):
         st.markdown("**Build your what-if**  \nNothing is saved. Changes are compared with the current schedule.")
         try:
             pbox = st.container(key="presets")
@@ -442,6 +480,180 @@ levers = describe_levers() if is_whatif else ""
 summ = engine.summarize(ev)
 is_range = scenario.startswith("Range") and is_whatif
 
+# ------------------------------------------------------------------ employee profile
+def render_profile(emp_id: str):
+    """Everything about one person: header, key numbers, per-grant charts, grant table, events and raw fields."""
+    e = emp_lookup.loc[emp_id]
+    company_name = data["companies"].set_index("company_id")["company_name"].get(e["company_id"], e["company_id"])
+    base_ev = wi_all if is_whatif else cur_all
+    pe = base_ev[base_ev["employee_id"] == emp_id]
+    ce = cur_all[cur_all["employee_id"] == emp_id]
+    gs = engine.grant_summary(data, emp_id, base_ev)
+    sched = engine.employee_schedule(data, emp_id, base_ev)
+    changed = is_whatif and not neutral
+
+    st.button("← Back to overview", key="back_top", on_click=close_emp)
+    st.markdown(f'<div class="hdr"><span class="hdr-t">{hx(e["full_name"])}</span>'
+                f'<span class="badge">{hx(e["employment_status"])}</span>'
+                + ('<span class="badge">What-if view</span>' if is_whatif else "") + "</div>", unsafe_allow_html=True)
+    st.markdown(chips_html([emp_id, company_name, str(e["department"]), str(e["country"]),
+                            f"Hired {pd.Timestamp(e['hire_date']):%b %Y}"]), unsafe_allow_html=True)
+
+    if e["employment_status"] == "Terminated":
+        td = e["termination_date"]
+        st.warning(f"Terminated{'' if pd.isna(td) else f' on {pd.Timestamp(td):%b %d, %Y}'}. "
+                   "Unvested shares normally forfeit; check how this person's plan treats them.")
+    if e["tax_residency_country"] != e["country"]:
+        st.warning(f"Tax residency ({e['tax_residency_country']}) differs from work country ({e['country']}). "
+                   "Review withholding before the next vest.")
+
+    # key numbers
+    up_sh, up_val = pe["shares_vesting"].sum(), pe["est_value_usd"].sum()
+    nxt = pe.sort_values("vest_date").head(1)
+    nxt_txt = "None scheduled" if nxt.empty else f"{nxt['vest_date'].iloc[0]:%b %d, %Y}"
+    nxt_sub = "" if nxt.empty else (f"{nxt['shares_vesting'].iloc[0]:,.0f} shares, "
+                                    f"{charts.short_money(nxt['est_value_usd'].iloc[0])}")
+    st.markdown(kpi_html([
+        ("Upcoming shares", charts.short_num(up_sh),
+         delta_text(up_sh, ce["shares_vesting"].sum()) if changed else None, None),
+        ("Est. value of upcoming", charts.short_money(up_val),
+         delta_text(up_val, ce["est_value_usd"].sum(), True) if changed else None, None),
+        ("Next vest", nxt_txt, None, nxt_sub),
+        ("Already vested", charts.short_num(gs["vested_shares"].sum()), None, None),
+        ("Forfeited", charts.short_num(gs["forfeited_shares"].sum()), None, None),
+        ("Grants", f"{len(gs)}", None, None),
+    ]), unsafe_allow_html=True)
+    if changed:
+        st.caption(md(f"Showing this person under your what-if: {levers}."))
+
+    # dive-in tools
+    all_grants = list(gs["grant_id"])
+    f1, f2, f3 = st.columns([2, 1.3, 1.3])
+    sel = f1.multiselect("Grants", all_grants, default=all_grants, key=f"p_grants_{emp_id}")
+    status_pick = f2.selectbox("Show", ["All", "Upcoming", "Vested", "Forfeited"], key="p_status")
+    measure = f3.radio("Measure", ["Shares", "Est. value"], horizontal=True, key="p_measure")
+    sd = sched[sched["grant_id"].isin(sel)]
+    if status_pick != "All":
+        sd = sd[sd["status"] == status_pick]
+    gs_sel = gs[gs["grant_id"].isin(sel)]
+
+    t_sched, t_grants, t_events, t_details = st.tabs(["Schedule", "Grants", "Events", "Details"])
+
+    with t_sched:
+        if sd.empty:
+            st.info("Nothing to show for these choices. Try another grant or status.")
+        else:
+            st.markdown("**Each grant on a timeline**")
+            tdf, tspec = charts.grant_timeline(sd, as_of_ts)
+            st.vega_lite_chart(tdf, tspec, use_container_width=True)
+            st.caption("Grey dots have vested, blue dots are upcoming, orange dots were forfeited. "
+                       "Bigger dots are bigger vests. The dashed line is the as-of date.")
+        up_sd = sd[sd["status"] == "Upcoming"]
+        if not up_sd.empty:
+            is_val = measure.startswith("Est")
+            st.markdown("**Upcoming vests by month**")
+            vdf, vspec = charts.vest_stack(up_sd.assign(value=up_sd["est_value_usd" if is_val else "shares_vesting"]),
+                                           is_val)
+            st.vega_lite_chart(vdf, vspec, use_container_width=True)
+        if not gs_sel.empty:
+            st.markdown("**How far along each grant is**")
+            pdf, pspec = charts.grant_progress(gs_sel)
+            st.vega_lite_chart(pdf, pspec, use_container_width=True)
+
+    with t_grants:
+        if gs_sel.empty:
+            st.info("No grants selected.")
+        else:
+            show = gs_sel.rename(columns={
+                "grant_id": "Grant", "award_type": "Type", "ticker": "Ticker", "grant_date": "Granted",
+                "vesting_schedule_id": "Schedule", "total_shares": "Total shares", "vested_shares": "Vested",
+                "forfeited_shares": "Forfeited", "upcoming_shares": "Upcoming", "upcoming_value_usd": "Upcoming value",
+                "upcoming_events": "Events left", "next_vest_date": "Next vest", "next_vest_shares": "Next shares",
+                "pct_vested": "% vested"})
+            show["% vested"] = show["% vested"] * 100
+            st.dataframe(show, hide_index=True, column_config={
+                "Granted": st.column_config.DateColumn(format="YYYY-MM-DD"),
+                "Next vest": st.column_config.DateColumn(format="YYYY-MM-DD"),
+                "Total shares": st.column_config.NumberColumn(format="%.0f"),
+                "Vested": st.column_config.NumberColumn(format="%.0f"),
+                "Forfeited": st.column_config.NumberColumn(format="%.0f"),
+                "Upcoming": st.column_config.NumberColumn(format="%.0f"),
+                "Upcoming value": st.column_config.NumberColumn(format="$%.0f"),
+                "Next shares": st.column_config.NumberColumn(format="%.0f"),
+                "% vested": st.column_config.ProgressColumn(format="%.0f%%", min_value=0, max_value=100)
+                if hasattr(st.column_config, "ProgressColumn") else st.column_config.NumberColumn(format="%.0f"),
+            })
+            pick_g = st.selectbox("Open one grant", all_grants, key=f"p_grant_{emp_id}")
+            g = data["grants"].set_index("grant_id").loc[pick_g]
+            st.markdown(kv_html([("Grant", pick_g), ("Type", g["award_type"]), ("Ticker", g["ticker"]),
+                                 ("Granted", f"{pd.Timestamp(g['grant_date']):%b %d, %Y}"),
+                                 ("Vesting starts", f"{pd.Timestamp(g['vesting_start_date']):%b %d, %Y}"),
+                                 ("Schedule", g["vesting_schedule_id"]), ("Total shares", f"{g['total_shares']:,.0f}"),
+                                 ("Status", g["grant_status"])]), unsafe_allow_html=True)
+            gd = sched[sched["grant_id"] == pick_g].rename(columns={
+                "vest_date": "Vest date", "shares_vesting": "Shares", "status": "Status", "est_price_usd": "Est. price",
+                "est_value_usd": "Est. value", "flags": "Notes", "tranche_id": "Tranche"}).drop(columns="grant_id")
+            st.dataframe(gd, hide_index=True, column_config={
+                "Vest date": st.column_config.DateColumn(format="YYYY-MM-DD"),
+                "Shares": st.column_config.NumberColumn(format="%.0f"),
+                "Est. price": st.column_config.NumberColumn(format="$%.2f"),
+                "Est. value": st.column_config.NumberColumn(format="$%.0f")})
+            st.caption("Past vests show shares only. Prices and values are estimates for upcoming vests.")
+
+    with t_events:
+        if pe.empty:
+            st.info("This person has no upcoming vesting events.")
+        else:
+            st.write(f"**{len(pe):,}** upcoming events, soonest first.")
+            st.download_button("Export this person's events (CSV)", pe.to_csv(index=False).encode("utf-8"),
+                               file_name=f"{emp_id}_upcoming_events.csv", mime="text/csv", use_container_width=True)
+            st.dataframe(pe[["vest_date", "days_until", "grant_id", "shares_vesting", "est_price_usd",
+                             "est_value_usd", "est_value_local", "local_currency", "flags"]],
+                         hide_index=True, column_config={
+                "vest_date": st.column_config.DateColumn("Vest date", format="YYYY-MM-DD"),
+                "days_until": st.column_config.NumberColumn("Days", format="%d"),
+                "shares_vesting": st.column_config.NumberColumn("Shares", format="%.1f" if attr else "%.0f"),
+                "est_price_usd": st.column_config.NumberColumn("Est. price", format="$%.2f"),
+                "est_value_usd": st.column_config.NumberColumn("Est. value (USD)", format="$%.0f"),
+                "est_value_local": st.column_config.NumberColumn("Est. value (local)", format="%.0f")})
+            st.caption("Shares are gross, before tax withholding.")
+        if changed:
+            diff = engine.diff_events(ce, pe)
+            st.markdown("**Timing changes caused by your what-if**")
+            if diff.empty:
+                st.caption("No timing changes for this person. Price and attrition assumptions are not listed here.")
+            else:
+                st.dataframe(diff, hide_index=True)
+
+    with t_details:
+        tenure = (as_of_ts - pd.Timestamp(e["hire_date"])).days / 365.25
+        st.markdown(kv_html([
+            ("Employee ID", emp_id), ("Email", e["email"]), ("Company", company_name),
+            ("Department", e["department"]), ("Work country", f"{e['country']} ({e['country_code']})"),
+            ("Tax residency", e["tax_residency_country"]), ("Local currency", e["local_currency"]),
+            ("Hire date", f"{pd.Timestamp(e['hire_date']):%b %d, %Y}"), ("Tenure", f"{tenure:.1f} years"),
+            ("Employment status", e["employment_status"]),
+            ("Termination date", "" if pd.isna(e["termination_date"]) else f"{pd.Timestamp(e['termination_date']):%b %d, %Y}")
+        ]), unsafe_allow_html=True)
+        tick = data["grants"].loc[data["grants"]["employee_id"] == emp_id, "ticker"].unique()
+        mk = market[market["ticker"].isin(tick)].copy()
+        fx = data["fx"][data["fx"]["currency"] == e["local_currency"]]
+        st.markdown("**Prices used**")
+        st.dataframe(mk.rename(columns={"ticker": "Ticker", "price_usd": "Price (USD)", "price_date": "As of",
+                                        "annual_volatility": "Volatility", "assumed_annual_growth": "Assumed growth"})
+                     .drop(columns="company"), hide_index=True)
+        if not fx.empty:
+            st.caption(f"FX: 1 USD = {fx['units_per_usd'].iloc[0]:,.4f} {e['local_currency']} (illustrative).")
+        st.download_button("Export full schedule (CSV)", sched.to_csv(index=False).encode("utf-8"),
+                           file_name=f"{emp_id}_full_schedule.csv", mime="text/csv", use_container_width=True)
+
+
+if ss.get("emp_view"):
+    if ss["emp_view"] in emp_lookup.index:
+        render_profile(ss["emp_view"])
+        st.stop()
+    ss["emp_view"] = None
+
 # ------------------------------------------------------------------ headline + summary cards
 if is_whatif:
     if neutral:
@@ -502,11 +714,13 @@ with tab_over:
     st.markdown("**Vesting by month**")
     with st.expander("Chart options"):
         b1, b2 = st.columns(2)
-        horizon_label = b1.selectbox("Horizon", ["12 months", "24 months", "36 months", "48 months"], index=1)
-        split_label = b2.selectbox("Split lines by", ["None (total)", "Company", "Country", "Department"])
+        horizon_label = b1.selectbox("Horizon", ["12 months", "24 months", "36 months", "48 months"], index=1,
+                                     key="o_horizon")
+        split_label = b2.selectbox("Split lines by", ["None (total)", "Company", "Country", "Department"],
+                                   key="o_split")
         b3, b4 = st.columns(2)
-        metric_label = b3.radio("Measure", ["Estimated value (USD)", "Shares vesting"])
-        cumulative = b4.checkbox("Cumulative", value=False)
+        metric_label = b3.radio("Measure", ["Estimated value (USD)", "Shares vesting"], key="o_measure")
+        cumulative = b4.checkbox("Cumulative", value=False, key="o_cumul")
     bi_end = as_of_ts + pd.DateOffset(months=int(horizon_label.split()[0]))
     metric = "shares_vesting" if metric_label.startswith("Shares") else "est_value_usd"
     is_money = metric == "est_value_usd"
@@ -560,8 +774,8 @@ with tab_over:
     # up next
     if not ev.empty:
         st.markdown("**Up next**")
-        st.markdown(cards_html(ev.sort_values(["vest_date", "est_value_usd"], ascending=[True, False]).head(10),
-                               1 if attr else 0), unsafe_allow_html=True)
+        cards_with_open(ev.sort_values(["vest_date", "est_value_usd"], ascending=[True, False]).head(10),
+                        "up", 1 if attr else 0)
 
         # where it vests
         dims = [("company", "By company"), ("country", "By country")]
@@ -630,7 +844,7 @@ with tab_events:
                       else st.radio("Layout", ["Cards", "Table"], horizontal=True, key="ev_layout")) or "Cards"
             if layout == "Cards":
                 n = min(ss["card_n"], len(ev))
-                st.markdown(cards_html(ev.head(n), 1 if attr else 0), unsafe_allow_html=True)
+                cards_with_open(ev.head(n), "ev", 1 if attr else 0)
                 if n < len(ev):
                     st.caption(f"Showing {n:,} of {len(ev):,}, soonest first.")
                     if st.button(f"Show {min(CARD_PAGE, len(ev) - n)} more", use_container_width=True):
@@ -668,6 +882,8 @@ with tab_people:
             by_emp["value_change"] = by_emp["est_value_usd"] - by_emp["value_change"]
         st.dataframe(by_emp.head(1000), hide_index=True)
         pick = st.selectbox("Employee detail", by_emp["employee_id"].head(500))
+        st.button("Open full profile", key="open_pick", on_click=open_emp, kwargs={"emp": pick},
+                  use_container_width=True)
         emp_grants = data["grants"][data["grants"]["employee_id"] == pick]
         st.write(f"{len(emp_grants)} grant(s), each on its own schedule")
         st.dataframe(emp_grants, hide_index=True)

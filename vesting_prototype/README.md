@@ -55,3 +55,7 @@ Push this folder to a public GitHub repo, then deploy at share.streamlit.io with
 ## Look and feel
 
 The accent color, font and rounded corners come from `.streamlit/config.toml`. Charts are defined in `charts.py` and drawn with Streamlit's built-in Vega-Lite support, so no extra packages are needed. The layout works on phones and desktops, and follows the device's light or dark setting.
+
+## Employee profile
+
+In the Up next list, the Events cards and the People tab, press **Open** to see one person: key numbers, a timeline of every grant, upcoming vests by month, grant progress, a grants table with drill-down, upcoming events, and all their fields. In What-if view the profile reflects the scenario. Press **Back to overview** to return; your filters and settings are kept.
