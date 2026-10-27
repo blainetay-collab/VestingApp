@@ -1,9 +1,10 @@
 """Generate a synthetic multi-company global RSU dataset for the vesting-tracker prototype.
 
 All companies, people, emails, prices and FX rates are fictional / illustrative.
-Run:  python generate_data.py     (writes CSVs into ./data)
+Run:  python generate_data.py     (writes CSVs into ./data, or into $VESTING_DATA_DIR if set)
 Edit COMPANIES below (the employee count column) to make the dataset bigger or smaller.
 """
+import os
 import random
 from datetime import date, timedelta
 from pathlib import Path
@@ -13,7 +14,7 @@ from dateutil.relativedelta import relativedelta
 
 SEED = 42
 AS_OF = date(2026, 10, 23)
-OUT = Path(__file__).parent / "data"
+OUT = Path(os.environ.get("VESTING_DATA_DIR") or Path(__file__).parent / "data")
 OUT.mkdir(exist_ok=True)
 random.seed(SEED)
 

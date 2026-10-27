@@ -6,31 +6,94 @@ Two views over the same data:
 
 Run from this folder:   streamlit run app.py
 """
+import html as _html
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
+import charts
 import engine
 import reports
 
-st.set_page_config(page_title="Equity Vesting Tracker", layout="wide", initial_sidebar_state="collapsed")
-DEFAULT_DIR = str(Path(__file__).parent / "data")
-HORIZON_DAYS = 1500  # events are computed once out to ~4 years; the window and BI slice from this
+st.set_page_config(page_title="Equity Vesting Tracker", page_icon="📈", layout="wide",
+                   initial_sidebar_state="collapsed")
+
+
+def find_data_dir() -> str:
+    """Use data/ next to this file, else CSVs sitting beside app.py, else generate the demo data once.
+
+    This lets the app run even if only the code files were uploaded (for example from a phone, where
+    folders cannot be created). The generated data is identical every time (fixed seed).
+    """
+    import os
+    import runpy
+    import tempfile
+    here = Path(__file__).parent
+    for d in (here / "data", here):
+        if (d / "companies.csv").exists():
+            return str(d)
+    gen = Path(tempfile.gettempdir()) / "vesting_demo_data"
+    if not (gen / "companies.csv").exists():
+        with st.spinner("Generating the demo data (first load only, a few seconds)..."):
+            os.environ["VESTING_DATA_DIR"] = str(gen)
+            runpy.run_path(str(here / "generate_data.py"))
+    return str(gen)
+
+
+DEFAULT_DIR = find_data_dir()
+HORIZON_DAYS = 1500  # events are computed once out to ~4 years; the window and chart slice from this
 MODE_CUR, MODE_WI = "Current schedule", "What-if"
+CARD_PAGE = 24
 
 st.markdown(
     """<style>
-    .kpi-wrap{display:flex;flex-wrap:wrap;gap:.6rem;margin:.4rem 0 .8rem 0}
-    .kpi{flex:1 1 150px;min-width:140px;background:var(--secondary-background-color);border-radius:.6rem;
-         padding:.65rem .85rem}
-    .kpi-l{font-size:.75rem;opacity:.7}
-    .kpi-v{font-size:1.45rem;font-weight:600;line-height:1.25}
-    .kpi-d{font-size:.8rem;opacity:.85}
+    /* layout */
+    [data-testid="stMainBlockContainer"],.block-container{max-width:1200px;padding-top:1.6rem}
+    .hdr{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin:0 0 .15rem 0}
+    .hdr-t{font-size:1.65rem;font-weight:700;letter-spacing:-.01em;line-height:1.2}
+    .badge{font-size:.68rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em;padding:.15rem .5rem;
+           border-radius:999px;border:1px solid rgba(128,128,128,.4);opacity:.8}
+    /* headline */
+    .hero{background:linear-gradient(135deg,#1E3A8A 0%,#2563EB 100%);color:#fff;border-radius:.9rem;
+          padding:1.1rem 1.3rem;margin:.6rem 0 .7rem 0}
+    .hero-k{font-size:.78rem;text-transform:uppercase;letter-spacing:.06em;opacity:.8}
+    .hero-v{font-size:2.6rem;font-weight:700;line-height:1.15;letter-spacing:-.02em}
+    .hero-s{font-size:.95rem;opacity:.92}
+    .hero-d{font-size:.9rem;margin-top:.35rem;font-weight:600;background:rgba(255,255,255,.16);
+            display:inline-block;padding:.1rem .55rem;border-radius:.4rem}
+    .hero-r{font-size:.8rem;opacity:.8;margin-top:.25rem}
+    /* small stat cards */
+    .kpi-wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.6rem;margin:0 0 .9rem 0}
+    .kpi{background:var(--secondary-background-color);border-radius:.7rem;padding:.6rem .85rem}
+    .kpi-l{font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;opacity:.65}
+    .kpi-v{font-size:1.4rem;font-weight:650;line-height:1.3}
+    .kpi-d{font-size:.78rem;opacity:.85}
     .kpi-s{font-size:.72rem;opacity:.65}
+    /* filter chips */
+    .chips{display:flex;gap:.4rem;flex-wrap:wrap;margin:.2rem 0 .6rem 0;font-size:.82rem}
+    .chip{background:var(--secondary-background-color);border-radius:999px;padding:.12rem .65rem}
+    .chips-none{opacity:.6;font-size:.82rem;margin:.2rem 0 .6rem 0}
+    /* vest cards */
+    .vgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:.6rem;margin:.3rem 0 .6rem 0}
+    .vc{background:var(--secondary-background-color);border-radius:.7rem;padding:.7rem .85rem;
+        border-left:4px solid #2563EB}
+    .vc-top{display:flex;justify-content:space-between;font-size:.78rem;opacity:.75}
+    .vc-name{font-weight:650;font-size:1rem;margin-top:.15rem}
+    .vc-sub{font-size:.8rem;opacity:.7}
+    .vc-row{display:flex;justify-content:space-between;align-items:baseline;margin-top:.35rem}
+    .vc-val{font-size:1.15rem;font-weight:700}
+    .vc-flag{font-size:.72rem;margin-top:.3rem;color:#EA580C}
+    /* keep the 2 x 2 preset buttons side by side on phones */
+    .st-key-presets [data-testid="stHorizontalBlock"]{flex-wrap:nowrap !important;gap:.5rem}
+    .st-key-presets [data-testid="stColumn"]{min-width:0 !important;width:auto !important;flex:1 1 0 !important}
     @media (max-width:640px){
-      [data-testid="stMainBlockContainer"],.block-container{padding-left:.8rem;padding-right:.8rem;padding-top:1.2rem}
+      [data-testid="stMainBlockContainer"],.block-container{padding-left:.8rem;padding-right:.8rem;padding-top:1rem}
+      .hdr-t{font-size:1.35rem}
+      .hero{padding:.9rem 1rem}
+      .hero-v{font-size:2.2rem}
       .kpi-v{font-size:1.2rem}
+      .vgrid{grid-template-columns:1fr}
     }
     </style>""",
     unsafe_allow_html=True,
@@ -43,6 +106,11 @@ def md(text: str) -> str:
     return text.replace("$", "\\$")
 
 
+def hx(text) -> str:
+    """Make text safe inside our own HTML, including dollar signs."""
+    return _html.escape(str(text)).replace("$", "&#36;")
+
+
 def money(x: float) -> str:
     return f"${x:,.0f}"
 
@@ -52,7 +120,7 @@ def delta_text(new: float, old: float, as_money: bool = False) -> str:
     if abs(diff) < 0.5:
         return "no change"
     arrow = "&#9650;" if diff > 0 else "&#9660;"
-    amt = money(abs(diff)) if as_money else f"{abs(diff):,.0f}"
+    amt = charts.short_money(abs(diff)) if as_money else charts.short_num(abs(diff))
     pct = f" ({diff / old * 100:+.1f}%)" if old else ""
     return f"{arrow} {amt}{pct}".replace("$", "&#36;")
 
@@ -61,11 +129,41 @@ def kpi_html(cards) -> str:
     parts = ['<div class="kpi-wrap">']
     for label, value, delta, sub in cards:
         d = f'<div class="kpi-d">{delta}</div>' if delta else ""
-        s = f'<div class="kpi-s">{sub.replace("$", "&#36;")}</div>' if sub else ""
-        parts.append(f'<div class="kpi"><div class="kpi-l">{label}</div>'
-                     f'<div class="kpi-v">{value.replace("$", "&#36;")}</div>{d}{s}</div>')
+        s = f'<div class="kpi-s">{hx(sub)}</div>' if sub else ""
+        parts.append(f'<div class="kpi"><div class="kpi-l">{hx(label)}</div>'
+                     f'<div class="kpi-v">{hx(value)}</div>{d}{s}</div>')
     parts.append("</div>")
     return "".join(parts)
+
+
+def hero_html(kicker: str, value: str, sub: str, delta: str | None, rng: str | None) -> str:
+    d = f'<div class="hero-d">{delta}</div>' if delta else ""
+    r = f'<div class="hero-r">{hx(rng)}</div>' if rng else ""
+    return (f'<div class="hero"><div class="hero-k">{hx(kicker)}</div><div class="hero-v">{hx(value)}</div>'
+            f'<div class="hero-s">{hx(sub)}</div>{d}{r}</div>')
+
+
+def cards_html(df: pd.DataFrame, share_decimals: int = 0) -> str:
+    """One card per vesting event; wraps into a grid on desktop and a single column on a phone."""
+    out = ['<div class="vgrid">']
+    for r in df.itertuples():
+        when = f"{r.vest_date:%b %d, %Y}"
+        days = "today" if r.days_until <= 0 else f"in {r.days_until} day{'s' if r.days_until != 1 else ''}"
+        flag = f'<div class="vc-flag">{hx(r.flags)}</div>' if r.flags else ""
+        out.append(
+            f'<div class="vc"><div class="vc-top"><span>{when}</span><span>{days}</span></div>'
+            f'<div class="vc-name">{hx(r.full_name)}</div>'
+            f'<div class="vc-sub">{hx(r.company)} &middot; {hx(r.country)}</div>'
+            f'<div class="vc-row"><span>{r.shares_vesting:,.{share_decimals}f} shares</span>'
+            f'<span class="vc-val">{hx(money(r.est_value_usd))}</span></div>{flag}</div>')
+    out.append("</div>")
+    return "".join(out)
+
+
+def chips_html(parts: list[str]) -> str:
+    if not parts:
+        return '<div class="chips-none">No filters applied. Showing every company and country.</div>'
+    return '<div class="chips">' + "".join(f'<span class="chip">{hx(p)}</span>' for p in parts) + "</div>"
 
 
 def combine_series(cur_s: pd.DataFrame, wi_s: pd.DataFrame) -> pd.DataFrame:
@@ -78,7 +176,9 @@ def combine_series(cur_s: pd.DataFrame, wi_s: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
     idx = sorted(set().union(*[set(p.index) for p in parts.values()]))
     full = pd.period_range(idx[0], idx[-1], freq="M").astype(str)
-    return pd.DataFrame(parts).reindex(full).fillna(0)
+    out = pd.DataFrame(parts).reindex(full).fillna(0)
+    out.index.name = "month"
+    return out
 
 
 def compare_table(cur: pd.DataFrame, wi: pd.DataFrame, key: str, metric: str) -> pd.DataFrame:
@@ -87,6 +187,16 @@ def compare_table(cur: pd.DataFrame, wi: pd.DataFrame, key: str, metric: str) ->
     t = pd.concat([a, b], axis=1).fillna(0)
     t["Change"] = t["What-if"] - t["Current"]
     return t
+
+
+def top_n_split(series: pd.DataFrame, n: int = 8) -> pd.DataFrame:
+    """Keep the n biggest lines and fold the rest into 'Other' so the chart stays readable."""
+    if series.shape[1] <= n:
+        return series
+    order = series.sum().sort_values(ascending=False).index
+    out = series[list(order[:n])].copy()
+    out["Other"] = series[list(order[n:])].sum(axis=1)
+    return out
 
 
 # ------------------------------------------------------------------ cached work
@@ -113,6 +223,17 @@ def get_whatif_events(data_dir: str, as_of, scenario, growth, vol, shock, attrit
     return engine.upcoming_events(data, as_of, HORIZON_DAYS, scenario, growth, vol, tr, shock, attrition)
 
 
+@st.cache_data(show_spinner="Working out what changed...")
+def get_bridge(data_dir: str, as_of, scenario, growth, vol, shock, attrition, actions_key):
+    """Events after each what-if lever is applied in turn, trimmed to the columns the bridge needs."""
+    data = get_data(data_dir)
+    actions = [{"kind": k, "employee_ids": list(ids), "date": d, "months": m} for k, ids, d, m in actions_key]
+    tr = engine.apply_actions(data["tranches"], actions) if actions else None
+    keep = ["days_until", "company", "country", "department", "employee_id", "full_name", "est_value_usd"]
+    return [(label, ev[keep]) for label, ev in
+            engine.whatif_steps(data, as_of, 365, scenario, growth, vol, tr, shock, attrition)]
+
+
 @st.cache_data(show_spinner=False)
 def events_xlsx(ev, filters_text, meta):
     return reports.build_data_workbook(ev, filters_text, meta)
@@ -131,6 +252,7 @@ def report_pdf(ev, summ, meta, include_detail, show_names):
 # ------------------------------------------------------------------ state + data
 ss = st.session_state
 ss.setdefault("actions", [])
+ss.setdefault("card_n", CARD_PAGE)
 data_dir = ss.get("data_dir", DEFAULT_DIR)
 try:
     data = get_data(data_dir)
@@ -159,27 +281,30 @@ def preset(shock=None, attr=None):
         ss["w_attr"] = attr
 
 
-# ------------------------------------------------------------------ header + top controls
-st.title("Equity Vesting Tracker")
-c_mode, c_asof, c_win = st.columns([3, 1, 1])
-mode = c_mode.radio("View", [MODE_CUR, MODE_WI], horizontal=True, key="mode")
+# ------------------------------------------------------------------ header + controls
+st.markdown('<div class="hdr"><span class="hdr-t">Equity Vesting Tracker</span>'
+            '<span class="badge">Synthetic data</span></div>', unsafe_allow_html=True)
+
+c_mode, c_asof, c_win, c_filt = st.columns([2.2, 1, 1, 1])
+with c_mode:
+    if hasattr(st, "segmented_control"):
+        mode = st.segmented_control("View", [MODE_CUR, MODE_WI], default=MODE_CUR, key="mode") or MODE_CUR
+    else:
+        mode = st.radio("View", [MODE_CUR, MODE_WI], horizontal=True, key="mode")
 as_of = c_asof.date_input("As of", value=market["price_date"].max().date())
 window_label = c_win.selectbox("Window", ["30 days", "90 days", "180 days", "365 days"], index=1)
 window_days = int(window_label.split()[0])
 is_whatif = mode == MODE_WI
-st.caption("What is scheduled to vest, valued at today's share prices. Synthetic demonstration data." if not is_whatif
-           else "Change prices, headcount or leave and compare against the current schedule. Nothing is saved.")
 
-# ------------------------------------------------------------------ filters (in the page, not a sidebar)
-with st.expander("Filters", expanded=True):
-    f1, f2, f3 = st.columns(3)
-    companies = f1.multiselect("Company", sorted(data["companies"]["company_name"]), key="f_company")
-    countries = f2.multiselect("Country", sorted(data["employees"]["country"].dropna().unique()), key="f_country")
-    departments = f3.multiselect("Department", sorted(data["employees"]["department"].dropna().unique()), key="f_dept")
-    s1, s2 = st.columns([3, 1])
-    search = s1.text_input("Employee name or ID contains", key="f_search")
-    s2.write("")
-    s2.button("Clear filters", on_click=clear_filters)
+with c_filt:
+    st.markdown('<div style="height:1.7rem"></div>', unsafe_allow_html=True)
+    with st.popover("Filters", use_container_width=True):
+        companies = st.multiselect("Company", sorted(data["companies"]["company_name"]), key="f_company")
+        countries = st.multiselect("Country", sorted(data["employees"]["country"].dropna().unique()), key="f_country")
+        departments = st.multiselect("Department", sorted(data["employees"]["department"].dropna().unique()),
+                                     key="f_dept")
+        search = st.text_input("Employee name or ID contains", key="f_search")
+        st.button("Clear filters", on_click=clear_filters, use_container_width=True)
 
 filter_parts = []
 if companies:
@@ -191,8 +316,7 @@ if departments:
 if search.strip():
     filter_parts.append(f"Employee contains '{search.strip()}'")
 filters_text = "; ".join(filter_parts) or "None"
-st.markdown("**Filtering:** " + "  |  ".join(filter_parts) if filter_parts
-            else "**Filtering:** none, showing every company and country")
+st.markdown(chips_html(filter_parts), unsafe_allow_html=True)
 
 
 def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
@@ -216,12 +340,18 @@ cur_all = get_current_events(data_dir, as_of_ts)
 scenario, g_arg, v_arg, shock, attr = "Flat", None, None, 0.0, 0.0
 if is_whatif:
     with st.container(border=True):
-        st.subheader("Build your what-if")
-        p1, p2, p3, p4 = st.columns(4)
-        p1.button("Market down 20%", on_click=preset, kwargs={"shock": -20}, use_container_width=True)
-        p2.button("Market up 20%", on_click=preset, kwargs={"shock": 20}, use_container_width=True)
-        p3.button("15% attrition", on_click=preset, kwargs={"attr": 15.0}, use_container_width=True)
-        p4.button("Reset", on_click=reset_whatif, use_container_width=True)
+        st.markdown("**Build your what-if**  \nNothing is saved. Changes are compared with the current schedule.")
+        try:
+            pbox = st.container(key="presets")
+        except TypeError:  # older Streamlit without container keys
+            pbox = st.container()
+        with pbox:
+            p1, p2 = st.columns(2)
+            p1.button("Market down 20%", on_click=preset, kwargs={"shock": -20}, use_container_width=True)
+            p2.button("Market up 20%", on_click=preset, kwargs={"shock": 20}, use_container_width=True)
+            p3, p4 = st.columns(2)
+            p3.button("15% attrition", on_click=preset, kwargs={"attr": 15.0}, use_container_width=True)
+            p4.button("Reset", on_click=reset_whatif, use_container_width=True)
 
         t_price, t_people = st.tabs(["Prices", "People and leave"])
         with t_price:
@@ -240,7 +370,7 @@ if is_whatif:
             st.caption("Attrition scales unvested shares by the chance each person is still employed at the vest "
                        "date. It is an expected value, so shares can be fractional.")
             st.markdown("**Add a people event**")
-            who_mode = st.radio("Who", ["Specific employees", "Everyone in the filters above"], horizontal=True,
+            who_mode = st.radio("Who", ["Specific employees", "Everyone in the filters"], horizontal=True,
                                 key="w_who")
             cand = sorted(apply_filters(cur_all)["employee_id"].unique())
             if who_mode == "Specific employees":
@@ -312,24 +442,39 @@ levers = describe_levers() if is_whatif else ""
 summ = engine.summarize(ev)
 is_range = scenario.startswith("Range") and is_whatif
 
-# ------------------------------------------------------------------ summary cards
+# ------------------------------------------------------------------ headline + summary cards
 if is_whatif:
     if neutral:
-        st.info("No changes yet. Move a slider, pick a preset, or add a people event to see the impact.")
+        st.info("No changes yet. Pick a preset above, move a slider, or add a people event to see the impact.")
     else:
-        st.info(md(f"What-if view: {levers}. Changes are shown against the current schedule."))
-cards = [
-    ("Vesting events", f"{len(ev):,}", delta_text(len(ev), len(cur_ev)) if is_whatif else None, None),
-    ("Shares vesting", f"{ev['shares_vesting'].sum():,.0f}",
-     delta_text(ev["shares_vesting"].sum(), cur_ev["shares_vesting"].sum()) if is_whatif else None, None),
-    ("Est. value (USD)", money(ev["est_value_usd"].sum()),
-     delta_text(ev["est_value_usd"].sum(), cur_ev["est_value_usd"].sum(), True) if is_whatif else None,
-     f"Range {money(ev['est_value_low'].sum())} to {money(ev['est_value_high'].sum())}" if is_range else None),
-    ("Employees", f"{ev['employee_id'].nunique():,}",
-     delta_text(ev["employee_id"].nunique(), cur_ev["employee_id"].nunique()) if is_whatif else None, None),
-    ("Companies", f"{ev['company'].nunique():,}", None, None),
-]
-st.markdown(kpi_html(cards), unsafe_allow_html=True)
+        st.caption(md(f"What-if: {levers}."))
+
+total_val = ev["est_value_usd"].sum()
+n_people, n_cos = ev["employee_id"].nunique(), ev["company"].nunique()
+hero_delta = None
+if is_whatif and not neutral:
+    hero_delta = delta_text(total_val, cur_ev["est_value_usd"].sum(), True) + " vs current schedule"
+st.markdown(hero_html(
+    f"{'What-if' if is_whatif else 'Estimated'} value vesting in the next {window_days} days",
+    charts.short_money(total_val),
+    f"{len(ev):,} vesting events across {n_people:,} people at {n_cos:,} "
+    f"{'company' if n_cos == 1 else 'companies'}",
+    hero_delta,
+    f"Range {charts.short_money(ev['est_value_low'].sum())} to {charts.short_money(ev['est_value_high'].sum())}"
+    if is_range else None), unsafe_allow_html=True)
+
+st.markdown(kpi_html([
+    ("Shares vesting", charts.short_num(ev["shares_vesting"].sum()),
+     delta_text(ev["shares_vesting"].sum(), cur_ev["shares_vesting"].sum()) if is_whatif and not neutral else None, None),
+    ("Vesting events", f"{len(ev):,}",
+     delta_text(len(ev), len(cur_ev)) if is_whatif and not neutral else None, None),
+    ("People", f"{n_people:,}",
+     delta_text(n_people, cur_ev["employee_id"].nunique()) if is_whatif and not neutral else None, None),
+    ("Companies", f"{n_cos:,}", None, None),
+]), unsafe_allow_html=True)
+
+if ev.empty:
+    st.info("No vesting events match this window and these filters. Try a longer window or clear the filters.")
 
 if len(companies) == 1:
     title_company = companies[0]
@@ -350,48 +495,104 @@ meta = {
     "view": "What-if scenario (hypothetical)" if is_whatif else "Current schedule", "levers": levers,
 }
 
-tab_bi, tab_events, tab_break, tab_people, tab_report, tab_data = st.tabs(
-    ["BI", "Events", "Breakdown", "People", "Report", "Data"])
+tab_over, tab_events, tab_people, tab_report = st.tabs(["Overview", "Events", "People", "Reports and data"])
 
-# ------------------------------------------------------------------ BI
-with tab_bi:
-    st.write("How much vests each month. Follows the filters above; this view has its own horizon.")
-    b1, b2, b3, b4 = st.columns(4)
-    horizon_label = b1.selectbox("Horizon", ["12 months", "24 months", "36 months", "48 months"], index=1)
-    metric_label = b2.radio("Measure", ["Shares vesting", "Estimated value (USD)"])
-    split_label = b3.selectbox("Split lines by", ["None (total)", "Company", "Country", "Department"])
-    cumulative = b4.checkbox("Cumulative", value=False)
+# ------------------------------------------------------------------ overview
+with tab_over:
+    st.markdown("**Vesting by month**")
+    with st.expander("Chart options"):
+        b1, b2 = st.columns(2)
+        horizon_label = b1.selectbox("Horizon", ["12 months", "24 months", "36 months", "48 months"], index=1)
+        split_label = b2.selectbox("Split lines by", ["None (total)", "Company", "Country", "Department"])
+        b3, b4 = st.columns(2)
+        metric_label = b3.radio("Measure", ["Estimated value (USD)", "Shares vesting"])
+        cumulative = b4.checkbox("Cumulative", value=False)
     bi_end = as_of_ts + pd.DateOffset(months=int(horizon_label.split()[0]))
     metric = "shares_vesting" if metric_label.startswith("Shares") else "est_value_usd"
+    is_money = metric == "est_value_usd"
     by = {"None (total)": None, "Company": "company", "Country": "country", "Department": "department"}[split_label]
     cur_bi = apply_filters(cur_all[cur_all["vest_date"] <= bi_end])
     wi_bi = apply_filters(wi_all[wi_all["vest_date"] <= bi_end]) if is_whatif else None
 
+    compare = False
     if is_whatif and by is None:
         series = combine_series(engine.monthly_series(cur_bi, metric, None, cumulative),
                                 engine.monthly_series(wi_bi, metric, None, cumulative))
+        compare = {"Current", "What-if"} <= set(series.columns)
     elif is_whatif:
-        series = engine.monthly_series(wi_bi, metric, by, cumulative)
-        st.caption("Split view shows the what-if only. Set 'Split lines by' to None to compare against current.")
+        series = top_n_split(engine.monthly_series(wi_bi, metric, by, cumulative))
+        st.caption("Split view shows the what-if only. Set 'Split lines by' to None to compare with current.")
     else:
-        series = engine.monthly_series(cur_bi, metric, by, cumulative)
+        series = top_n_split(engine.monthly_series(cur_bi, metric, by, cumulative))
 
     if series.empty:
         st.info("No vesting events match the filters in this horizon.")
     else:
-        st.line_chart(series)
-        unit = " USD" if metric == "est_value_usd" else " shares"
+        long_df, spec = charts.monthly_chart(series, is_money, compare)
+        st.vega_lite_chart(long_df, spec, use_container_width=True)
         shown_df = wi_bi if is_whatif else cur_bi
         peak = engine.monthly_series(shown_df, metric)["Total"].idxmax()
-        st.caption(md(f"{'What-if' if is_whatif else 'Current'} total in horizon: {shown_df[metric].sum():,.0f}{unit} "
-                      f"| busiest month: {peak}"))
-        table = series.round(0)
-        if is_whatif and by is None and {"Current", "What-if"} <= set(table.columns):
-            table["Change"] = table["What-if"] - table["Current"]
-        table = table.reset_index()
-        st.dataframe(table, hide_index=True)
-        st.download_button("Export chart data (CSV)", table.to_csv(index=False).encode("utf-8"),
-                           file_name="monthly_vesting_series.csv", mime="text/csv")
+        total_txt = charts.short_money(shown_df[metric].sum()) if is_money else f"{shown_df[metric].sum():,.0f} shares"
+        st.caption(md(f"{'What-if' if is_whatif else 'Current'} total in horizon: {total_txt}. "
+                      f"Busiest month: {pd.Period(peak).strftime('%b %Y')}."))
+        with st.expander("Show chart data"):
+            table = series.round(0)
+            if compare:
+                table["Change"] = table["What-if"] - table["Current"]
+            table = table.reset_index()
+            st.dataframe(table, hide_index=True)
+            st.download_button("Export chart data (CSV)", table.to_csv(index=False).encode("utf-8"),
+                               file_name="monthly_vesting_series.csv", mime="text/csv")
+
+    # what changed (bridge)
+    if is_whatif and not neutral:
+        st.markdown(f"**What changed** (next {window_days} days)")
+        bridge = get_bridge(data_dir, as_of_ts, scenario, g_arg, v_arg, shock, attr, actions_key)
+        totals = [(label, apply_filters(e[e["days_until"] <= window_days])["est_value_usd"].sum())
+                  for label, e in bridge]
+        if len(totals) > 1 and any(t for _, t in totals):
+            bdf, bspec = charts.bridge_chart(totals)
+            st.vega_lite_chart(bdf, bspec, use_container_width=True)
+            st.caption("Each bar applies one change on top of the one before it, in this order: people events, "
+                       "attrition, share price change, price path. A different order would split the effect "
+                       "slightly differently, but the start and end always match the cards above.")
+
+    # up next
+    if not ev.empty:
+        st.markdown("**Up next**")
+        st.markdown(cards_html(ev.sort_values(["vest_date", "est_value_usd"], ascending=[True, False]).head(10),
+                               1 if attr else 0), unsafe_allow_html=True)
+
+        # where it vests
+        dims = [("company", "By company"), ("country", "By country")]
+        if n_cos == 1:
+            dims = [("country", "By country"), ("department", "By department")]
+        st.markdown("**Where it vests**")
+        bm = "est_value_usd"
+        cols = st.columns(2)
+        for col, (key, title) in zip(cols, dims):
+            with col:
+                st.caption(title + (" (grey tick = current schedule)" if is_whatif and not neutral else ""))
+                if is_whatif:
+                    t = compare_table(cur_ev, wi_ev, key, bm).sort_values("What-if", ascending=False).head(8)
+                    shown, base = t["What-if"], (t["Current"] if not neutral else None)
+                else:
+                    t = cur_ev.groupby(key)[bm].sum().sort_values(ascending=False).head(8).to_frame("Current")
+                    shown, base = t["Current"], None
+                bdf, bspec = charts.bullet_chart(t.index, shown, base, True)
+                st.vega_lite_chart(bdf, bspec, use_container_width=True)
+        with st.expander("Show breakdown tables"):
+            m_label = st.radio("Measure ", ["Estimated value (USD)", "Shares vesting"], horizontal=True)
+            tm = "est_value_usd" if m_label.startswith("Estimated") else "shares_vesting"
+            for key, title in (("month", "By month"), ("company", "By company"), ("country", "By country")):
+                st.markdown(f"**{title}**")
+                if is_whatif:
+                    t = compare_table(cur_ev, wi_ev, key, tm)
+                else:
+                    t = cur_ev.groupby(key)[tm].sum().rename("Current").to_frame()
+                if key != "month":
+                    t = t.sort_values(t.columns[1] if is_whatif else "Current", ascending=False)
+                st.dataframe(t.round(0).reset_index(), hide_index=True)
 
 # ------------------------------------------------------------------ events
 with tab_events:
@@ -417,51 +618,43 @@ with tab_events:
         if ev.empty:
             st.info("No vesting events match. Try widening the window or clearing filters.")
         else:
-            x1, x2, _ = st.columns([1, 1, 4])
+            x1, x2 = st.columns(2)
             x1.download_button("Export CSV", ev.to_csv(index=False).encode("utf-8"),
-                               file_name="vesting_events_filtered.csv", mime="text/csv")
+                               file_name="vesting_events_filtered.csv", mime="text/csv", use_container_width=True)
             x2.download_button("Export Excel", events_xlsx(ev, filters_text, meta),
                                file_name="vesting_events_filtered.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        all_cols = st.checkbox("Show all columns", value=False)
-        compact = ["vest_date", "company", "full_name", "country", "shares_vesting", "est_price_usd",
-                   "est_value_usd", "flags"]
-        share_fmt = "%.1f" if attr else "%.0f"
-        st.dataframe(
-            ev, hide_index=True, column_order=None if all_cols else compact,
-            column_config={
-                "vest_date": st.column_config.DateColumn("Vest date", format="YYYY-MM-DD"),
-                "shares_vesting": st.column_config.NumberColumn("Shares", format=share_fmt),
-                "est_price_usd": st.column_config.NumberColumn("Est. price", format="$%.2f"),
-                "est_price_low": st.column_config.NumberColumn("Price low", format="$%.2f"),
-                "est_price_high": st.column_config.NumberColumn("Price high", format="$%.2f"),
-                "est_value_usd": st.column_config.NumberColumn("Est. value (USD)", format="$%.0f"),
-                "est_value_low": st.column_config.NumberColumn("Value low", format="$%.0f"),
-                "est_value_high": st.column_config.NumberColumn("Value high", format="$%.0f"),
-                "est_value_local": st.column_config.NumberColumn("Est. value (local)", format="%.0f"),
-            })
-        st.caption("Shares are gross, before tax withholding. The flags column marks items needing review.")
-
-# ------------------------------------------------------------------ breakdown
-with tab_break:
-    if ev.empty and cur_ev.empty:
-        st.info("No vesting events in this window.")
-    else:
-        m_label = st.radio("Measure ", ["Estimated value (USD)", "Shares vesting"], horizontal=True)
-        bm = "est_value_usd" if m_label.startswith("Estimated") else "shares_vesting"
-        for key, title in (("month", "By month"), ("company", "By company"), ("country", "By country")):
-            st.subheader(title)
-            if is_whatif:
-                t = compare_table(cur_ev, wi_ev, key, bm)
-                chart = t[["Current", "What-if"]]
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                               use_container_width=True)
+            layout = (st.segmented_control("Layout", ["Cards", "Table"], default="Cards", key="ev_layout")
+                      if hasattr(st, "segmented_control")
+                      else st.radio("Layout", ["Cards", "Table"], horizontal=True, key="ev_layout")) or "Cards"
+            if layout == "Cards":
+                n = min(ss["card_n"], len(ev))
+                st.markdown(cards_html(ev.head(n), 1 if attr else 0), unsafe_allow_html=True)
+                if n < len(ev):
+                    st.caption(f"Showing {n:,} of {len(ev):,}, soonest first.")
+                    if st.button(f"Show {min(CARD_PAGE, len(ev) - n)} more", use_container_width=True):
+                        ss["card_n"] = n + CARD_PAGE
+                        st.rerun()
             else:
-                t = cur_ev.groupby(key)[bm].sum().rename("Current").to_frame()
-                chart = t
-            if key != "month":
-                t = t.sort_values(t.columns[1] if is_whatif else "Current", ascending=False)
-                chart = chart.loc[t.index]
-            st.bar_chart(chart)
-            st.dataframe(t.round(0).reset_index(), hide_index=True)
+                all_cols = st.checkbox("Show all columns", value=False)
+                compact = ["vest_date", "company", "full_name", "country", "shares_vesting", "est_price_usd",
+                           "est_value_usd", "flags"]
+                share_fmt = "%.1f" if attr else "%.0f"
+                st.dataframe(
+                    ev, hide_index=True, column_order=None if all_cols else compact,
+                    column_config={
+                        "vest_date": st.column_config.DateColumn("Vest date", format="YYYY-MM-DD"),
+                        "shares_vesting": st.column_config.NumberColumn("Shares", format=share_fmt),
+                        "est_price_usd": st.column_config.NumberColumn("Est. price", format="$%.2f"),
+                        "est_price_low": st.column_config.NumberColumn("Price low", format="$%.2f"),
+                        "est_price_high": st.column_config.NumberColumn("Price high", format="$%.2f"),
+                        "est_value_usd": st.column_config.NumberColumn("Est. value (USD)", format="$%.0f"),
+                        "est_value_low": st.column_config.NumberColumn("Value low", format="$%.0f"),
+                        "est_value_high": st.column_config.NumberColumn("Value high", format="$%.0f"),
+                        "est_value_local": st.column_config.NumberColumn("Est. value (local)", format="%.0f"),
+                    })
+            st.caption("Shares are gross, before tax withholding. Orange notes mark items needing review.")
 
 # ------------------------------------------------------------------ people
 with tab_people:
@@ -480,8 +673,9 @@ with tab_people:
         st.dataframe(emp_grants, hide_index=True)
         st.dataframe(ev[ev["employee_id"] == pick], hide_index=True)
 
-# ------------------------------------------------------------------ report
+# ------------------------------------------------------------------ reports and data
 with tab_report:
+    st.markdown("**Client report**")
     st.write("Build a client-ready report from the events currently shown. The active view and filters apply"
              + (", and the report is labeled as a hypothetical what-if." if is_whatif else "."))
     include_detail = st.checkbox("Include event detail", value=True)
@@ -494,17 +688,19 @@ with tab_report:
         if prepare:
             d1, d2 = st.columns(2)
             d1.download_button("Download Excel report", report_xlsx(ev, summ, meta, include_detail, show_names),
-                               file_name="upcoming_vesting_report.xlsx",
+                               file_name="upcoming_vesting_report.xlsx", use_container_width=True,
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             d2.download_button("Download PDF report", report_pdf(ev, summ, meta, include_detail, show_names),
-                               file_name="upcoming_vesting_report.pdf", mime="application/pdf")
+                               file_name="upcoming_vesting_report.pdf", mime="application/pdf",
+                               use_container_width=True)
             if include_detail and len(ev) > 400:
                 st.caption(f"The PDF lists all {len(ev):,} events and may run long. "
                            "Filter by company or shorten the window for a tighter report.")
 
-# ------------------------------------------------------------------ data
-with tab_data:
-    st.text_input("Data folder", value=DEFAULT_DIR, key="data_dir")
+    st.divider()
+    st.markdown("**Data**")
+    with st.expander("Data source"):
+        st.text_input("Data folder", value=DEFAULT_DIR, key="data_dir")
     findings = get_findings(data_dir)
     if findings.empty:
         st.success("All data checks passed.")
@@ -513,7 +709,8 @@ with tab_data:
     t = data["tranches"]
     st.caption(f"Loaded {len(data['companies'])} companies, {len(data['employees']):,} employees, "
                f"{len(data['grants']):,} grants, {len(t):,} vesting events "
-               f"({(t['status'] == 'Unvested').sum():,} unvested, {(t['status'] == 'Forfeited').sum():,} forfeited).")
+               f"({(t['status'] == 'Unvested').sum():,} unvested, {(t['status'] == 'Forfeited').sum():,} forfeited). "
+               "Synthetic demonstration data.")
     if st.button("Run schedule check"):
         rebuilt = engine.regenerate_tranches(data["grants"], data["schedules"])
         stored = t[t["status"] != "Forfeited"].merge(

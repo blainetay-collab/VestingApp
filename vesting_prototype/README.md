@@ -43,5 +43,15 @@ export follows them. Tabs: BI, Events, Breakdown, People, Report, Data.
 engine.load_data() is the only place that reads files. Replace it (or add an adapter) to map a
 brokerage export onto the same column names.
 
+## Data folder is optional
+If `data/` is missing (for example when uploading from a phone, where folders can't be created), the app
+looks for the CSVs next to app.py, and otherwise generates the same demo data on first load.
+Only app.py, engine.py, reports.py, generate_data.py and requirements.txt are required.
+
 ## Publishing
 Push this folder to a public GitHub repo, then deploy at share.streamlit.io with app.py as the main file.
+
+
+## Look and feel
+
+The accent color, font and rounded corners come from `.streamlit/config.toml`. Charts are defined in `charts.py` and drawn with Streamlit's built-in Vega-Lite support, so no extra packages are needed. The layout works on phones and desktops, and follows the device's light or dark setting.

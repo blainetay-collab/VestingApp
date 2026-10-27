@@ -343,3 +343,33 @@ def diff_events(current: pd.DataFrame, whatif: pd.DataFrame) -> pd.DataFrame:
     out = ["change", "full_name", "employee_id", "company", "country", "grant_id", "current_date", "whatif_date",
            "current_shares", "whatif_shares", "value_change"]
     return m[out].sort_values("value_change", key=lambda x: x.abs(), ascending=False).reset_index(drop=True)
+
+
+# --------------------------------------------------------------------------
+# What-if bridge: how much of the change comes from each lever
+# --------------------------------------------------------------------------
+def whatif_steps(data: dict[str, pd.DataFrame], as_of, window_days: int, scenario: str = "Flat",
+                 annual_growth: float | None = None, annual_vol: float | None = None,
+                 tranches: pd.DataFrame | None = None, price_shock: float = 0.0,
+                 attrition: float = 0.0) -> list[tuple[str, pd.DataFrame]]:
+    """Apply the what-if levers one at a time, in a fixed order, and return the events after each step.
+
+    Order: people events -> attrition -> share price change -> price path. The first item is always
+    the current schedule and the last item equals the full what-if, so the steps add up exactly.
+    Only levers that are switched on produce a step. Because the levers are applied in sequence,
+    each step's size depends on that order (for example attrition is measured before the price change).
+    """
+    def run(**kw):
+        return upcoming_events(data, as_of, window_days, **kw)
+
+    steps = [("Current schedule", run())]
+    if tranches is not None:
+        steps.append(("People events", run(tranches=tranches)))
+    if attrition:
+        steps.append(("Attrition", run(tranches=tranches, attrition=attrition)))
+    if price_shock:
+        steps.append(("Share price change", run(tranches=tranches, attrition=attrition, price_shock=price_shock)))
+    if scenario != "Flat":
+        steps.append(("Price path", run(scenario=scenario, annual_growth=annual_growth, annual_vol=annual_vol,
+                                         tranches=tranches, attrition=attrition, price_shock=price_shock)))
+    return steps
