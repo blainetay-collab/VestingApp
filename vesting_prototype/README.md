@@ -59,3 +59,17 @@ The accent color, font and rounded corners come from `.streamlit/config.toml`. C
 ## Employee profile
 
 In the Up next list, the Events cards and the People tab, press **Open** to see one person: key numbers, a timeline of every grant, upcoming vests by month, grant progress, a grants table with drill-down, upcoming events, and all their fields. In What-if view the profile reflects the scenario. Press **Back to overview** to return; your filters and settings are kept.
+
+
+## Award types, rules and learning
+
+The data covers nine award types: RSU, PSU, Restricted Stock, Stock Option, SAR (stock-settled), SAR (cash-settled), Phantom Stock, Performance Cash and ESPP. Each is valued the way that award really works (for example options and SARs at their gain over the strike) and is marked as paid in shares or in cash.
+
+- **Performance payout:** in What-if, set the PSU and performance cash payout (% of target) for each company.
+- **People events:** resignation, layoff, termination for cause, retirement, death, disability, violation (non-compete or similar) and leave of absence. What each does to each award type comes from the plan rules.
+- **Rules and guide tab:** a guide to every award type, event and term, plus an editor for the plan rules, for all companies or one company. Rules can be downloaded and loaded back.
+- **Also at stake:** clawback exposure and vested options that could lapse after an event. These are shown separately from the vesting totals.
+
+The rules start at typical market practice, not any real company's plan. This is general education, not tax or legal advice.
+
+If an older `data` folder (from before the award-type update) is present, the app ignores it and generates fresh demo data.

@@ -7,6 +7,7 @@ Two views over the same data:
 Run from this folder:   streamlit run app.py
 """
 import html as _html
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -14,7 +15,9 @@ import streamlit as st
 
 import charts
 import engine
+import learn
 import reports
+import rules as R
 
 st.set_page_config(page_title="Equity Vesting Tracker", page_icon="📈", layout="wide",
                    initial_sidebar_state="collapsed")
@@ -31,9 +34,10 @@ def find_data_dir() -> str:
     import tempfile
     here = Path(__file__).parent
     for d in (here / "data", here):
-        if (d / "companies.csv").exists():
+        # a data folder from before the award-type update lacks the 'settlement' column; skip it and regenerate
+        if (d / "companies.csv").exists() and "settlement" in (d / "grants.csv").read_text().split("\n", 1)[0]:
             return str(d)
-    gen = Path(tempfile.gettempdir()) / "vesting_demo_data"
+    gen = Path(tempfile.gettempdir()) / "vesting_demo_data_v2"
     if not (gen / "companies.csv").exists():
         with st.spinner("Generating the demo data (first load only, a few seconds)..."):
             os.environ["VESTING_DATA_DIR"] = str(gen)
@@ -85,6 +89,13 @@ st.markdown(
     .vc-val{font-size:1.15rem;font-weight:700}
     .vc-flag{font-size:.72rem;margin-top:.3rem;color:#EA580C}
     .vgrid.one{grid-template-columns:1fr;margin-bottom:.15rem}
+    .tag{font-size:.68rem;font-weight:600;padding:.05rem .45rem;border-radius:.35rem;background:rgba(37,99,235,.14);
+         color:var(--text-color);margin-right:.3rem;white-space:nowrap}
+    .tag.cash{background:rgba(13,148,136,.2)}
+    .tags{margin-top:.25rem}
+    .explain{border-left:4px solid #2563EB;background:var(--secondary-background-color);border-radius:.5rem;
+             padding:.6rem .85rem;margin:.4rem 0 .8rem 0;font-size:.92rem}
+    .explain b{font-weight:650}
     .kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:.5rem .9rem;margin:.3rem 0 .8rem 0}
     .kv-i{border-bottom:1px solid rgba(128,128,128,.25);padding:.25rem 0}
     .kv-k{font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;opacity:.6}
@@ -120,6 +131,11 @@ def money(x: float) -> str:
     return f"${x:,.0f}"
 
 
+def price(x: float) -> str:
+    """Share prices and strikes need cents; totals do not."""
+    return f"${x:,.2f}"
+
+
 def delta_text(new: float, old: float, as_money: bool = False) -> str:
     diff = new - old
     if abs(diff) < 0.5:
@@ -148,6 +164,21 @@ def hero_html(kicker: str, value: str, sub: str, delta: str | None, rng: str | N
             f'<div class="hero-s">{hx(sub)}</div>{d}{r}</div>')
 
 
+UNKNOWN_AWARD = {"name": "Unrecognized award type", "tagline": "", "what": "This award type is not in the guide.",
+                 "value": "Units \u00d7 share price."}
+
+
+def unit_text(r, decimals: int = 0) -> str:
+    """How many units, in words that fit the award type."""
+    if r.award_type == "Performance Cash":
+        return f"{money(r.shares_vesting)} target &times; {r.payout_pct:.0f}%".replace("$", "&#36;") \
+            if r.payout_pct != 100 else f"{money(r.shares_vesting)} cash".replace("$", "&#36;")
+    word = {"Stock Option": "options", "SAR (stock-settled)": "SARs", "SAR (cash-settled)": "SARs",
+            "Phantom Stock": "phantom units", "ESPP": "shares bought"}.get(r.award_type, "shares")
+    extra = f" &middot; strike {price(r.strike_price)}".replace("$", "&#36;") if r.award_type in R.OPTION_LIKE else ""
+    return f"{r.shares_vesting:,.{decimals}f} {word}{extra}"
+
+
 def cards_html(df: pd.DataFrame, share_decimals: int = 0, single: bool = False) -> str:
     """One card per vesting event; wraps into a grid on desktop and a single column on a phone."""
     out = ['<div class="vgrid one">' if single else '<div class="vgrid">']
@@ -159,7 +190,9 @@ def cards_html(df: pd.DataFrame, share_decimals: int = 0, single: bool = False) 
             f'<div class="vc"><div class="vc-top"><span>{when}</span><span>{days}</span></div>'
             f'<div class="vc-name">{hx(r.full_name)}</div>'
             f'<div class="vc-sub">{hx(r.company)} &middot; {hx(r.country)}</div>'
-            f'<div class="vc-row"><span>{r.shares_vesting:,.{share_decimals}f} shares</span>'
+            f'<div class="tags"><span class="tag" title="{hx(learn.AWARDS.get(r.award_type, UNKNOWN_AWARD)["tagline"])}">{hx(r.award_type)}</span>'
+            f'<span class="tag{" cash" if r.settlement == "Cash" else ""}">Paid in {hx(r.settlement.lower())}</span></div>'
+            f'<div class="vc-row"><span>{unit_text(r, share_decimals)}</span>'
             f'<span class="vc-val">{hx(money(r.est_value_usd))}</span></div>{flag}</div>')
     out.append("</div>")
     return "".join(out)
@@ -227,22 +260,32 @@ def get_current_events(data_dir: str, as_of):
 
 
 @st.cache_data(show_spinner="Calculating your what-if...")
-def get_whatif_events(data_dir: str, as_of, scenario, growth, vol, shock, attrition, actions_key):
+def get_whatif_events(data_dir: str, as_of, scenario, growth, vol, shock, attrition, actions_key, rules_json,
+                      payout_json):
     data = get_data(data_dir)
     actions = [{"kind": k, "employee_ids": list(ids), "date": d, "months": m} for k, ids, d, m in actions_key]
-    tr = engine.apply_actions(data["tranches"], actions) if actions else None
-    return engine.upcoming_events(data, as_of, HORIZON_DAYS, scenario, growth, vol, tr, shock, attrition)
+    tr = engine.apply_actions(data["tranches"], actions, data, json.loads(rules_json)) if actions else None
+    return engine.upcoming_events(data, as_of, HORIZON_DAYS, scenario, growth, vol, tr, shock, attrition,
+                                  json.loads(payout_json) or None)
 
 
 @st.cache_data(show_spinner="Working out what changed...")
-def get_bridge(data_dir: str, as_of, scenario, growth, vol, shock, attrition, actions_key):
+def get_bridge(data_dir: str, as_of, scenario, growth, vol, shock, attrition, actions_key, rules_json, payout_json):
     """Events after each what-if lever is applied in turn, trimmed to the columns the bridge needs."""
     data = get_data(data_dir)
     actions = [{"kind": k, "employee_ids": list(ids), "date": d, "months": m} for k, ids, d, m in actions_key]
-    tr = engine.apply_actions(data["tranches"], actions) if actions else None
-    keep = ["days_until", "company", "country", "department", "employee_id", "full_name", "est_value_usd"]
+    tr = engine.apply_actions(data["tranches"], actions, data, json.loads(rules_json)) if actions else None
+    keep = ["days_until", "company", "country", "department", "employee_id", "full_name", "award_type", "est_value_usd"]
     return [(label, ev[keep]) for label, ev in
-            engine.whatif_steps(data, as_of, 365, scenario, growth, vol, tr, shock, attrition)]
+            engine.whatif_steps(data, as_of, 365, scenario, growth, vol, tr, shock, attrition,
+                                json.loads(payout_json) or None)]
+
+
+@st.cache_data(show_spinner=False)
+def get_side_effects(data_dir: str, as_of, actions_key, rules_json, shock):
+    data = get_data(data_dir)
+    actions = [{"kind": k, "employee_ids": list(ids), "date": d, "months": m} for k, ids, d, m in actions_key]
+    return engine.side_effects(data, actions, json.loads(rules_json), as_of, shock)
 
 
 @st.cache_data(show_spinner=False)
@@ -264,12 +307,23 @@ def report_pdf(ev, summ, meta, include_detail, show_names):
 ss = st.session_state
 ss.setdefault("actions", [])
 ss.setdefault("card_n", CARD_PAGE)
+ss.setdefault("rules", {})        # plan-rule overrides, see rules.py
+ss.setdefault("payout", {})       # PSU / performance cash payout % by company (missing = 100)
+ss.setdefault("rules_ver", 0)
+ss.setdefault("payout_ver", 0)
+SCOPE_ALL = "All companies (defaults)"
+# Starting values are set here, not with widget defaults, so they survive the profile round trip (see below).
+for _k, _v in {"mode": MODE_CUR, "ev_layout": "Cards", "r_view": "Learn", "o_horizon": "24 months",
+               "o_split": "None (total)", "o_measure": "Estimated value (USD)", "o_cumul": False,
+               "g_topic": "Award types", "g_award": "RSU", "g_event": "resign", "r_scope": SCOPE_ALL,
+               "r_event": "resign", "data_dir": DEFAULT_DIR}.items():
+    ss.setdefault(_k, _v)
 data_dir = ss.get("data_dir", DEFAULT_DIR)
 try:
     data = get_data(data_dir)
 except Exception as exc:  # missing folder / file
     st.error(f"Could not load data from '{data_dir}': {exc}")
-    st.text_input("Data folder", value=DEFAULT_DIR, key="data_dir")
+    st.text_input("Data folder", key="data_dir")
     st.stop()
 market = data["market"]
 emp_lookup = data["employees"].set_index("employee_id")
@@ -285,7 +339,8 @@ def close_emp():
 
 # Widgets that are not drawn on a given run lose their saved value. These live on screens that are hidden while
 # an employee profile is open, so re-save them to keep the user's choices when they come back.
-for _k in ("o_horizon", "o_split", "o_measure", "o_cumul", "ev_layout", "data_dir"):
+for _k in ("o_horizon", "o_split", "o_measure", "o_cumul", "ev_layout", "data_dir", "r_view", "r_scope", "r_event",
+           "g_topic", "g_award", "g_event"):
     if _k in ss:
         ss[_k] = ss[_k]
 
@@ -302,20 +357,25 @@ def cards_with_open(df: pd.DataFrame, prefix: str, share_decimals: int = 0):
 
 
 def clear_filters():
-    ss["f_company"], ss["f_country"], ss["f_dept"], ss["f_search"] = [], [], [], ""
+    ss["f_company"], ss["f_country"], ss["f_dept"], ss["f_search"], ss["f_award"] = [], [], [], "", []
 
 
 def reset_whatif():
     ss["w_scenario"], ss["w_shock"], ss["w_attr"], ss["w_own"] = "Flat", 0, 0.0, True
     ss["w_growth"], ss["w_vol"], ss["actions"] = 8.0, 35.0, []
+    ss["payout"], ss["w_pay_all"] = {}, 100
+    ss["payout_ver"] += 1
 
 
-def preset(shock=None, attr=None):
+def preset(shock=None, attr=None, pay=None):
     reset_whatif()
     if shock is not None:
         ss["w_shock"] = shock
     if attr is not None:
         ss["w_attr"] = attr
+    if pay is not None:
+        ss["payout"] = {c: float(pay) for c in data["companies"]["company_name"]}
+        ss["w_pay_all"] = pay
 
 
 # ------------------------------------------------------------------ header + controls
@@ -325,7 +385,7 @@ st.markdown('<div class="hdr"><span class="hdr-t">Equity Vesting Tracker</span>'
 c_mode, c_asof, c_win, c_filt = st.columns([2.2, 1, 1, 1])
 with c_mode:
     if hasattr(st, "segmented_control"):
-        mode = st.segmented_control("View", [MODE_CUR, MODE_WI], default=MODE_CUR, key="mode") or MODE_CUR
+        mode = st.segmented_control("View", [MODE_CUR, MODE_WI], key="mode") or MODE_CUR
     else:
         mode = st.radio("View", [MODE_CUR, MODE_WI], horizontal=True, key="mode")
 as_of = c_asof.date_input("As of", value=market["price_date"].max().date())
@@ -340,6 +400,7 @@ with c_filt:
         countries = st.multiselect("Country", sorted(data["employees"]["country"].dropna().unique()), key="f_country")
         departments = st.multiselect("Department", sorted(data["employees"]["department"].dropna().unique()),
                                      key="f_dept")
+        awards = st.multiselect("Award type", R.AWARD_TYPES, key="f_award")
         search = st.text_input("Employee name or ID contains", key="f_search")
         st.button("Clear filters", on_click=clear_filters, use_container_width=True)
 
@@ -350,6 +411,8 @@ if countries:
     filter_parts.append("Country: " + ", ".join(countries))
 if departments:
     filter_parts.append("Department: " + ", ".join(departments))
+if awards:
+    filter_parts.append("Award: " + ", ".join(awards))
 if search.strip():
     filter_parts.append(f"Employee contains '{search.strip()}'")
 filters_text = "; ".join(filter_parts) or "None"
@@ -364,6 +427,8 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
         df = df[df["country"].isin(countries)]
     if departments:
         df = df[df["department"].isin(departments)]
+    if awards:
+        df = df[df["award_type"].isin(awards)]
     if search.strip():
         q = search.strip().lower()
         df = df[df["full_name"].str.lower().str.contains(q, regex=False)
@@ -375,10 +440,20 @@ as_of_ts = pd.Timestamp(as_of)
 cur_all = get_current_events(data_dir, as_of_ts)
 
 # ------------------------------------------------------------------ what-if builder
+def explain_box(html_text: str):
+    st.markdown(f'<div class="explain">{html_text}</div>', unsafe_allow_html=True)
+
+
+def set_all_payout(pct):
+    ss["payout"] = {c: float(pct) for c in data["companies"]["company_name"]} if pct != 100 else {}
+    ss["payout_ver"] += 1
+
+
 scenario, g_arg, v_arg, shock, attr = "Flat", None, None, 0.0, 0.0
 if is_whatif:
     with (st.expander("What-if settings", expanded=False) if ss.get("emp_view") else st.container(border=True)):
-        st.markdown("**Build your what-if**  \nNothing is saved. Changes are compared with the current schedule.")
+        st.markdown("**Build your what-if**  \nNothing is saved. Changes are compared with the current schedule. "
+                    "Each tab explains what its settings do.")
         try:
             pbox = st.container(key="presets")
         except TypeError:  # older Streamlit without container keys
@@ -389,10 +464,17 @@ if is_whatif:
             p2.button("Market up 20%", on_click=preset, kwargs={"shock": 20}, use_container_width=True)
             p3, p4 = st.columns(2)
             p3.button("15% attrition", on_click=preset, kwargs={"attr": 15.0}, use_container_width=True)
-            p4.button("Reset", on_click=reset_whatif, use_container_width=True)
+            p4.button("PSUs pay 50%", on_click=preset, kwargs={"pay": 50}, use_container_width=True)
+            p5, p6 = st.columns(2)
+            p5.button("PSUs pay 150%", on_click=preset, kwargs={"pay": 150}, use_container_width=True)
+            p6.button("Reset", on_click=reset_whatif, use_container_width=True)
 
-        t_price, t_people = st.tabs(["Prices", "People and leave"])
+        t_price, t_pay, t_people = st.tabs(["Prices", "Performance payout", "People and events"])
         with t_price:
+            explain_box("<b>Prices.</b> Every value is shares &times; a projected share price. "
+                        "<b>Flat</b> holds today's price. <b>Growth</b> compounds it each year. <b>Range</b> adds a "
+                        "bear and a bull case from each company's volatility. The slider below first moves "
+                        "today's price up or down.")
             scenario = st.selectbox("Price path", engine.SCENARIOS, key="w_scenario")
             shock = st.slider("Change today's share prices by (%)", -50, 50, 0, 1, key="w_shock") / 100
             if scenario != "Flat":
@@ -403,11 +485,39 @@ if is_whatif:
                                   disabled=own or not scenario.startswith("Range")) / 100
                 g_arg, v_arg = (None, None) if own else (growth, vol)
 
+        with t_pay:
+            explain_box("<b>Performance payout.</b> PSUs and performance cash pay a percentage of their target, "
+                        "decided by results. 100% means target. Set it per company: for example a company that "
+                        "is missing its goals might pay 50%, one that beats them 150%. Each grant also has its own "
+                        "maximum, so entries above it are capped. Other award types are not affected.")
+            pa, pb = st.columns([3, 1])
+            all_pct = pa.slider("Set every company to (%)", 0, 200, 100, 5, key="w_pay_all")
+            pb.markdown('<div style="height:1.7rem"></div>', unsafe_allow_html=True)
+            pb.button("Apply", key="pay_apply", on_click=set_all_payout, kwargs={"pct": all_pct},
+                      use_container_width=True)
+            pay_df = pd.DataFrame({"Company": sorted(data["companies"]["company_name"])})
+            pay_df["Payout % of target"] = [float(ss["payout"].get(c, 100.0)) for c in pay_df["Company"]]
+            edited = st.data_editor(
+                pay_df, hide_index=True, disabled=["Company"], use_container_width=True,
+                key=f"payout_ed_{ss['payout_ver']}",
+                column_config={"Payout % of target": st.column_config.NumberColumn(
+                    min_value=0, max_value=200, step=5, format="%d%%",
+                    help="Percent of target paid out. 100 = target.")})
+            ss["payout"] = {r["Company"]: float(r["Payout % of target"]) for _, r in edited.iterrows()
+                            if abs(float(r["Payout % of target"]) - 100.0) > 1e-9}
+            n_perf = int(cur_all[cur_all["award_type"].isin(R.PERF_TYPES)].shape[0])
+            st.caption(f"{n_perf:,} PSU and performance cash payouts are scheduled in the next four years across all "
+                       "companies. Pro-rata or accelerated payouts after a people event follow the rules instead.")
+
         with t_people:
+            explain_box("<b>People and events.</b> <b>Attrition</b> assumes a share of staff leave each year and "
+                        "forfeit what is unvested. <b>Events</b> are specific things that happen to specific people. "
+                        "What each event does to each award type comes from the plan rules, which you can view and "
+                        "change per company on the <i>Rules and guide</i> tab.")
             attr = st.slider("Assumed annual attrition (%)", 0.0, 30.0, 0.0, 0.5, key="w_attr") / 100
-            st.caption("Attrition scales unvested shares by the chance each person is still employed at the vest "
-                       "date. It is an expected value, so shares can be fractional.")
-            st.markdown("**Add a people event**")
+            st.caption("Attrition scales unvested units by the chance each person is still employed at the vest "
+                       "date. It is an expected value, so units can be fractional.")
+            st.markdown("**Add an event for specific people**")
             who_mode = st.radio("Who", ["Specific employees", "Everyone in the filters"], horizontal=True,
                                 key="w_who")
             cand = sorted(apply_filters(cur_all)["employee_id"].unique())
@@ -419,10 +529,32 @@ if is_whatif:
                 ids = cand
                 st.caption(f"{len(ids):,} people with upcoming vesting match the filters.")
             e1, e2, e3 = st.columns([3, 1, 1])
-            kind = e1.selectbox("What happens", list(engine.ACTION_KINDS), format_func=engine.ACTION_KINDS.get,
-                                key="w_kind")
+            kind = e1.selectbox("What happens", list(R.EVENTS), format_func=R.EVENTS.get, key="w_kind")
             ev_date = e2.date_input("From", value=(as_of_ts + pd.Timedelta(days=30)).date(), key="w_date")
             months = e3.number_input("Pause (months)", 1, 24, 3, key="w_months", disabled=(kind != "leave"))
+            info = learn.EVENTS[kind]
+            explain_box(f"<b>{hx(R.EVENTS[kind])}.</b> {hx(info['what'])}<br><b>Typically:</b> {hx(info['typical'])}"
+                        f"<br><b>Why it matters:</b> {hx(info['matters'])}")
+            who_cos = [c for c in pd.Series([emp_lookup.loc[i, 'company_id'] for i in ids]).map(
+                data["companies"].set_index("company_id")["company_name"]).value_counts().index] if ids else []
+            with st.expander("What happens to each award type under the current rules?"):
+                shown_co = who_cos[0] if who_cos else None
+                rr = R.resolve_rules(ss["rules"], shown_co)[kind]
+                st.dataframe(pd.DataFrame({"Award type": R.AWARD_TYPES,
+                                           "What happens": [rr["treatments"][a] for a in R.AWARD_TYPES]}),
+                             hide_index=True, use_container_width=True)
+                if len(who_cos) > 1:
+                    st.caption(f"These people work at {len(who_cos)} companies and rules can differ by company. "
+                               f"Showing {shown_co}.")
+                elif shown_co:
+                    st.caption(f"Rules for {shown_co}.")
+                else:
+                    st.caption("Pick people to see the rules for their company. Showing the defaults.")
+                if kind != "leave":
+                    st.caption(f"Vested options and SARs stay exercisable for {rr['window_days']} days. "
+                               + (f"Anything delivered in the last {rr['clawback_months']} months counts as clawback exposure."
+                                  if rr["clawback_months"] else "No clawback applies."))
+                st.caption("Change these on the Rules and guide tab.")
             if st.button("Add event"):
                 if not ids:
                     st.warning("Pick at least one employee, or loosen the filters.")
@@ -432,7 +564,7 @@ if is_whatif:
                     ss["actions"].append({"kind": kind, "employee_ids": tuple(ids), "date": str(ev_date),
                                           "months": int(months) if kind == "leave" else 0, "label": label})
             if ss["actions"]:
-                st.dataframe(pd.DataFrame([{"Event": engine.ACTION_KINDS[a["kind"]], "People": a["label"],
+                st.dataframe(pd.DataFrame([{"Event": R.EVENTS[a["kind"]], "People": a["label"],
                                             "From": a["date"], "Pause (months)": a["months"] or None}
                                            for a in ss["actions"]]), hide_index=True)
                 r1, r2, _ = st.columns([1, 1, 3])
@@ -444,7 +576,9 @@ if is_whatif:
                     st.rerun()
 
 actions_key = tuple((a["kind"], tuple(a["employee_ids"]), a["date"], a["months"]) for a in ss["actions"])
-neutral = scenario == "Flat" and not shock and not attr and not ss["actions"]
+rules_json = json.dumps(ss["rules"], sort_keys=True)
+payout_json = json.dumps({k: v for k, v in ss["payout"].items() if v != 100}, sort_keys=True)
+neutral = scenario == "Flat" and not shock and not attr and not ss["actions"] and payout_json == "{}"
 
 
 def describe_levers() -> str:
@@ -456,17 +590,22 @@ def describe_levers() -> str:
         parts.append(f"share prices {shock:+.0%} today")
     if attr:
         parts.append(f"{attr:.1%} annual attrition")
-    short = {"terminate_forfeit": "departure (unvested shares forfeit)",
-             "terminate_accelerate": "departure (unvested shares accelerate)",
-             "leave": "leave of absence"}
+    if payout_json != "{}":
+        pay = ss["payout"]
+        items = [f"{c} {v:.0f}%" for c, v in list(pay.items())[:3]]
+        parts.append("PSU / performance cash payout at " + ", ".join(items)
+                     + (f" and {len(pay) - 3} more" if len(pay) > 3 else "") + " of target")
     for a in ss["actions"]:
-        txt = f"{short[a['kind']]} for {a['label']} from {a['date']}"
+        txt = f"{R.EVENT_SHORT[a['kind']]} for {a['label']} from {a['date']}"
         parts.append(txt + (f", vesting paused {a['months']} months" if a["kind"] == "leave" else ""))
+    custom = sum(R.count_overrides(ss["rules"], sc) for sc in ss["rules"])
+    if custom and ss["actions"]:
+        parts.append(f"{custom} customized plan rule(s) in effect")
     return "; ".join(parts) or "no changes yet"
 
 
-wi_all = (get_whatif_events(data_dir, as_of_ts, scenario, g_arg, v_arg, shock, attr, actions_key)
-          if is_whatif else None)
+wi_all = (get_whatif_events(data_dir, as_of_ts, scenario, g_arg, v_arg, shock, attr, actions_key, rules_json,
+                            payout_json) if is_whatif else None)
 
 
 def prep(df: pd.DataFrame) -> pd.DataFrame:
@@ -479,6 +618,24 @@ ev = wi_ev if is_whatif else cur_ev
 levers = describe_levers() if is_whatif else ""
 summ = engine.summarize(ev)
 is_range = scenario.startswith("Range") and is_whatif
+
+def example_text(r) -> str:
+    """The arithmetic behind one vesting event, with the real numbers filled in (r is an events row)."""
+    aw, u, p, val = r["award_type"], r["shares_vesting"], r["est_price_usd"], r["est_value_usd"]
+    k = r["strike_price"]
+    if aw in R.OPTION_LIKE:
+        if p > k:
+            return f"{u:,.0f} units \u00d7 (price {price(p)} \u2212 strike {price(k)}) = {money(val)}"
+        return f"Price {price(p)} is at or below the strike {price(k)}, so the gain is $0 (underwater)."
+    if aw == "PSU":
+        return f"{r['target_units']:,.0f} target units \u00d7 {r['payout_pct']:.0f}% payout \u00d7 price {price(p)} = {money(val)}"
+    if aw == "Performance Cash":
+        return f"{money(r['target_units'])} target \u00d7 {r['payout_pct']:.0f}% payout = {money(val)}"
+    if aw == "ESPP":
+        return (f"Savings buy {u:,.1f} shares at a discount \u00d7 price {price(p)} = {money(val)} "
+                "(the number of shares depends on the price)")
+    return f"{u:,.0f} units \u00d7 price {price(p)} = {money(val)}"
+
 
 # ------------------------------------------------------------------ employee profile
 def render_profile(emp_id: str):
@@ -508,14 +665,14 @@ def render_profile(emp_id: str):
                    "Review withholding before the next vest.")
 
     # key numbers
-    up_sh, up_val = pe["shares_vesting"].sum(), pe["est_value_usd"].sum()
+    up_sh, up_val = pe["share_units"].sum(), pe["est_value_usd"].sum()
     nxt = pe.sort_values("vest_date").head(1)
     nxt_txt = "None scheduled" if nxt.empty else f"{nxt['vest_date'].iloc[0]:%b %d, %Y}"
-    nxt_sub = "" if nxt.empty else (f"{nxt['shares_vesting'].iloc[0]:,.0f} shares, "
+    nxt_sub = "" if nxt.empty else (f"{nxt['award_type'].iloc[0]}, "
                                     f"{charts.short_money(nxt['est_value_usd'].iloc[0])}")
     st.markdown(kpi_html([
-        ("Upcoming shares", charts.short_num(up_sh),
-         delta_text(up_sh, ce["shares_vesting"].sum()) if changed else None, None),
+        ("Upcoming units", charts.short_num(up_sh),
+         delta_text(up_sh, ce["share_units"].sum()) if changed else None, "excludes performance cash"),
         ("Est. value of upcoming", charts.short_money(up_val),
          delta_text(up_val, ce["est_value_usd"].sum(), True) if changed else None, None),
         ("Next vest", nxt_txt, None, nxt_sub),
@@ -531,7 +688,7 @@ def render_profile(emp_id: str):
     f1, f2, f3 = st.columns([2, 1.3, 1.3])
     sel = f1.multiselect("Grants", all_grants, default=all_grants, key=f"p_grants_{emp_id}")
     status_pick = f2.selectbox("Show", ["All", "Upcoming", "Vested", "Forfeited"], key="p_status")
-    measure = f3.radio("Measure", ["Shares", "Est. value"], horizontal=True, key="p_measure")
+    measure = f3.radio("Measure", ["Units", "Est. value"], horizontal=True, key="p_measure")
     sd = sched[sched["grant_id"].isin(sel)]
     if status_pick != "All":
         sd = sd[sd["status"] == status_pick]
@@ -552,8 +709,9 @@ def render_profile(emp_id: str):
         if not up_sd.empty:
             is_val = measure.startswith("Est")
             st.markdown("**Upcoming vests by month**")
-            vdf, vspec = charts.vest_stack(up_sd.assign(value=up_sd["est_value_usd" if is_val else "shares_vesting"]),
-                                           is_val)
+            vdf, vspec = charts.vest_stack(
+                up_sd.assign(value=up_sd["est_value_usd"] if is_val else
+                             up_sd["shares_vesting"].where(up_sd["award_type"] != "Performance Cash", 0.0)), is_val)
             st.vega_lite_chart(vdf, vspec, use_container_width=True)
         if not gs_sel.empty:
             st.markdown("**How far along each grant is**")
@@ -565,8 +723,9 @@ def render_profile(emp_id: str):
             st.info("No grants selected.")
         else:
             show = gs_sel.rename(columns={
-                "grant_id": "Grant", "award_type": "Type", "ticker": "Ticker", "grant_date": "Granted",
-                "vesting_schedule_id": "Schedule", "total_shares": "Total shares", "vested_shares": "Vested",
+                "grant_id": "Grant", "award_type": "Type", "settlement": "Paid in", "ticker": "Ticker",
+                "grant_date": "Granted", "strike_price": "Strike", "expiry_date": "Expires",
+                "vesting_schedule_id": "Schedule", "total_shares": "Total units", "vested_shares": "Vested",
                 "forfeited_shares": "Forfeited", "upcoming_shares": "Upcoming", "upcoming_value_usd": "Upcoming value",
                 "upcoming_events": "Events left", "next_vest_date": "Next vest", "next_vest_shares": "Next shares",
                 "pct_vested": "% vested"})
@@ -574,31 +733,48 @@ def render_profile(emp_id: str):
             st.dataframe(show, hide_index=True, column_config={
                 "Granted": st.column_config.DateColumn(format="YYYY-MM-DD"),
                 "Next vest": st.column_config.DateColumn(format="YYYY-MM-DD"),
-                "Total shares": st.column_config.NumberColumn(format="%.0f"),
+                "Expires": st.column_config.DateColumn(format="YYYY-MM-DD"),
+                "Strike": st.column_config.NumberColumn(format="$%.2f"),
+                "Total units": st.column_config.NumberColumn(format="%.0f"),
                 "Vested": st.column_config.NumberColumn(format="%.0f"),
                 "Forfeited": st.column_config.NumberColumn(format="%.0f"),
                 "Upcoming": st.column_config.NumberColumn(format="%.0f"),
                 "Upcoming value": st.column_config.NumberColumn(format="$%.0f"),
-                "Next shares": st.column_config.NumberColumn(format="%.0f"),
+                "Next shares": st.column_config.NumberColumn("Next units", format="%.0f"),
                 "% vested": st.column_config.ProgressColumn(format="%.0f%%", min_value=0, max_value=100)
                 if hasattr(st.column_config, "ProgressColumn") else st.column_config.NumberColumn(format="%.0f"),
             })
             pick_g = st.selectbox("Open one grant", all_grants, key=f"p_grant_{emp_id}")
             g = data["grants"].set_index("grant_id").loc[pick_g]
-            st.markdown(kv_html([("Grant", pick_g), ("Type", g["award_type"]), ("Ticker", g["ticker"]),
-                                 ("Granted", f"{pd.Timestamp(g['grant_date']):%b %d, %Y}"),
-                                 ("Vesting starts", f"{pd.Timestamp(g['vesting_start_date']):%b %d, %Y}"),
-                                 ("Schedule", g["vesting_schedule_id"]), ("Total shares", f"{g['total_shares']:,.0f}"),
-                                 ("Status", g["grant_status"])]), unsafe_allow_html=True)
+            info = learn.AWARDS.get(g["award_type"], UNKNOWN_AWARD)
+            pairs = [("Grant", pick_g), ("Type", info["name"]), ("Paid in", g["settlement"]), ("Ticker", g["ticker"]),
+                     ("Granted", f"{pd.Timestamp(g['grant_date']):%b %d, %Y}"),
+                     ("Vesting starts", f"{pd.Timestamp(g['vesting_start_date']):%b %d, %Y}"),
+                     ("Schedule", g["vesting_schedule_id"]),
+                     ("Total units" + (" (USD)" if g["award_type"] == "Performance Cash" else ""),
+                      f"{g['total_shares']:,.0f}"),
+                     ("Status", g["grant_status"])]
+            if g["award_type"] in R.OPTION_LIKE:
+                pairs += [("Strike price", money(g["strike_price"])), ("Expires", f"{pd.Timestamp(g['expiry_date']):%b %d, %Y}")]
+            if g["award_type"] in R.PERF_TYPES:
+                pairs += [("Performance metric", g["perf_metric"]), ("Maximum payout", f"{g['perf_max_pct']:.0f}% of target")]
+            if g["award_type"] == "Restricted Stock":
+                pairs.append(("83(b) election", "Yes" if g["election_83b"] else "No"))
+            if g["award_type"] == "ESPP":
+                pairs += [("Discount", f"{g['purchase_discount']:.0%}"), ("Lookback", "Yes" if g["lookback"] else "No")]
+            st.markdown(kv_html(pairs), unsafe_allow_html=True)
+            nxt_g = pe[pe["grant_id"] == pick_g].sort_values("vest_date").head(1)
+            ex = f"<br><b>Next vest, worked out:</b> {hx(example_text(nxt_g.iloc[0]))}" if not nxt_g.empty else ""
+            explain_box(f"<b>{hx(info['tagline'])}</b> {hx(info['what'])}<br><b>Value:</b> {hx(info['value'])}{ex}")
             gd = sched[sched["grant_id"] == pick_g].rename(columns={
                 "vest_date": "Vest date", "shares_vesting": "Shares", "status": "Status", "est_price_usd": "Est. price",
                 "est_value_usd": "Est. value", "flags": "Notes", "tranche_id": "Tranche"}).drop(columns="grant_id")
             st.dataframe(gd, hide_index=True, column_config={
                 "Vest date": st.column_config.DateColumn(format="YYYY-MM-DD"),
-                "Shares": st.column_config.NumberColumn(format="%.0f"),
+                "Shares": st.column_config.NumberColumn("Units", format="%.1f" if attr else "%.0f"),
                 "Est. price": st.column_config.NumberColumn(format="$%.2f"),
                 "Est. value": st.column_config.NumberColumn(format="$%.0f")})
-            st.caption("Past vests show shares only. Prices and values are estimates for upcoming vests.")
+            st.caption("Past vests show units only. Prices and values are estimates for upcoming vests.")
 
     with t_events:
         if pe.empty:
@@ -607,16 +783,17 @@ def render_profile(emp_id: str):
             st.write(f"**{len(pe):,}** upcoming events, soonest first.")
             st.download_button("Export this person's events (CSV)", pe.to_csv(index=False).encode("utf-8"),
                                file_name=f"{emp_id}_upcoming_events.csv", mime="text/csv", use_container_width=True)
-            st.dataframe(pe[["vest_date", "days_until", "grant_id", "shares_vesting", "est_price_usd",
-                             "est_value_usd", "est_value_local", "local_currency", "flags"]],
+            st.dataframe(pe[["vest_date", "days_until", "grant_id", "award_type", "settlement", "shares_vesting",
+                             "est_price_usd", "est_value_usd", "est_value_local", "local_currency", "flags"]],
                          hide_index=True, column_config={
                 "vest_date": st.column_config.DateColumn("Vest date", format="YYYY-MM-DD"),
                 "days_until": st.column_config.NumberColumn("Days", format="%d"),
-                "shares_vesting": st.column_config.NumberColumn("Shares", format="%.1f" if attr else "%.0f"),
-                "est_price_usd": st.column_config.NumberColumn("Est. price", format="$%.2f"),
+                "award_type": "Type", "settlement": "Paid in",
+                "shares_vesting": st.column_config.NumberColumn("Units", format="%.1f" if attr else "%.0f"),
+                "est_price_usd": st.column_config.NumberColumn("Share price", format="$%.2f"),
                 "est_value_usd": st.column_config.NumberColumn("Est. value (USD)", format="$%.0f"),
                 "est_value_local": st.column_config.NumberColumn("Est. value (local)", format="%.0f")})
-            st.caption("Shares are gross, before tax withholding.")
+            st.caption("Units are gross, before tax withholding. Performance cash units are US dollars.")
         if changed:
             diff = engine.diff_events(ce, pe)
             st.markdown("**Timing changes caused by your what-if**")
@@ -675,9 +852,19 @@ st.markdown(hero_html(
     f"Range {charts.short_money(ev['est_value_low'].sum())} to {charts.short_money(ev['est_value_high'].sum())}"
     if is_range else None), unsafe_allow_html=True)
 
+def settle_value(df: pd.DataFrame, how: str) -> float:
+    return float(df.loc[df["settlement"] == how, "est_value_usd"].sum())
+
+
+cmp_on = is_whatif and not neutral
 st.markdown(kpi_html([
-    ("Shares vesting", charts.short_num(ev["shares_vesting"].sum()),
-     delta_text(ev["shares_vesting"].sum(), cur_ev["shares_vesting"].sum()) if is_whatif and not neutral else None, None),
+    ("Units vesting", charts.short_num(ev["share_units"].sum()),
+     delta_text(ev["share_units"].sum(), cur_ev["share_units"].sum()) if cmp_on else None,
+     "shares, options, SARs, phantom units"),
+    ("Paid in shares", charts.short_money(settle_value(ev, "Shares")),
+     delta_text(settle_value(ev, "Shares"), settle_value(cur_ev, "Shares"), True) if cmp_on else None, "value delivered as stock"),
+    ("Paid in cash", charts.short_money(settle_value(ev, "Cash")),
+     delta_text(settle_value(ev, "Cash"), settle_value(cur_ev, "Cash"), True) if cmp_on else None, "payroll must fund this"),
     ("Vesting events", f"{len(ev):,}",
      delta_text(len(ev), len(cur_ev)) if is_whatif and not neutral else None, None),
     ("People", f"{n_people:,}",
@@ -705,26 +892,36 @@ meta = {
     "vol_text": "Company-specific (from market data)" if v_arg is None else f"{v_arg:.1%} (all companies)",
     "filters": "" if filters_text == "None" else filters_text, "data_note": "Synthetic demonstration data.",
     "view": "What-if scenario (hypothetical)" if is_whatif else "Current schedule", "levers": levers,
+    "payout_text": ("100% of target for every company" if payout_json == "{}" or not is_whatif else
+                    ", ".join(f"{c} {v:.0f}%" for c, v in ss["payout"].items()) + " of target; others 100%"),
+    "rules_text": ("Typical defaults" if not any(R.count_overrides(ss["rules"], sc) for sc in ss["rules"]) else
+                   "Customized: " + ", ".join(f"{('all companies' if sc == R.DEFAULT_SCOPE else sc)} "
+                                              f"({R.count_overrides(ss['rules'], sc)} changes)" for sc in ss["rules"]
+                                              if R.count_overrides(ss["rules"], sc))),
+    "award_note": "Value depends on award type: shares x price; options and SARs the gain over the strike; "
+                  "performance cash dollars x payout %. Units for performance cash are US dollars.",
 }
 
-tab_over, tab_events, tab_people, tab_report = st.tabs(["Overview", "Events", "People", "Reports and data"])
+tab_over, tab_events, tab_people, tab_rules, tab_report = st.tabs(
+    ["Overview", "Events", "People", "Rules and guide", "Reports and data"])
 
 # ------------------------------------------------------------------ overview
 with tab_over:
     st.markdown("**Vesting by month**")
     with st.expander("Chart options"):
         b1, b2 = st.columns(2)
-        horizon_label = b1.selectbox("Horizon", ["12 months", "24 months", "36 months", "48 months"], index=1,
+        horizon_label = b1.selectbox("Horizon", ["12 months", "24 months", "36 months", "48 months"],
                                      key="o_horizon")
-        split_label = b2.selectbox("Split lines by", ["None (total)", "Company", "Country", "Department"],
+        split_label = b2.selectbox("Split lines by", ["None (total)", "Company", "Country", "Department", "Award type"],
                                    key="o_split")
         b3, b4 = st.columns(2)
-        metric_label = b3.radio("Measure", ["Estimated value (USD)", "Shares vesting"], key="o_measure")
-        cumulative = b4.checkbox("Cumulative", value=False, key="o_cumul")
+        metric_label = b3.radio("Measure", ["Estimated value (USD)", "Units vesting"], key="o_measure")
+        cumulative = b4.checkbox("Cumulative", key="o_cumul")
     bi_end = as_of_ts + pd.DateOffset(months=int(horizon_label.split()[0]))
-    metric = "shares_vesting" if metric_label.startswith("Shares") else "est_value_usd"
+    metric = "share_units" if metric_label.startswith("Units") else "est_value_usd"
     is_money = metric == "est_value_usd"
-    by = {"None (total)": None, "Company": "company", "Country": "country", "Department": "department"}[split_label]
+    by = {"None (total)": None, "Company": "company", "Country": "country", "Department": "department",
+          "Award type": "award_type"}[split_label]
     cur_bi = apply_filters(cur_all[cur_all["vest_date"] <= bi_end])
     wi_bi = apply_filters(wi_all[wi_all["vest_date"] <= bi_end]) if is_whatif else None
 
@@ -746,7 +943,7 @@ with tab_over:
         st.vega_lite_chart(long_df, spec, use_container_width=True)
         shown_df = wi_bi if is_whatif else cur_bi
         peak = engine.monthly_series(shown_df, metric)["Total"].idxmax()
-        total_txt = charts.short_money(shown_df[metric].sum()) if is_money else f"{shown_df[metric].sum():,.0f} shares"
+        total_txt = charts.short_money(shown_df[metric].sum()) if is_money else f"{shown_df[metric].sum():,.0f} units"
         st.caption(md(f"{'What-if' if is_whatif else 'Current'} total in horizon: {total_txt}. "
                       f"Busiest month: {pd.Period(peak).strftime('%b %Y')}."))
         with st.expander("Show chart data"):
@@ -761,15 +958,48 @@ with tab_over:
     # what changed (bridge)
     if is_whatif and not neutral:
         st.markdown(f"**What changed** (next {window_days} days)")
-        bridge = get_bridge(data_dir, as_of_ts, scenario, g_arg, v_arg, shock, attr, actions_key)
+        bridge = get_bridge(data_dir, as_of_ts, scenario, g_arg, v_arg, shock, attr, actions_key, rules_json, payout_json)
         totals = [(label, apply_filters(e[e["days_until"] <= window_days])["est_value_usd"].sum())
                   for label, e in bridge]
         if len(totals) > 1 and any(t for _, t in totals):
             bdf, bspec = charts.bridge_chart(totals)
             st.vega_lite_chart(bdf, bspec, use_container_width=True)
             st.caption("Each bar applies one change on top of the one before it, in this order: people events, "
-                       "attrition, share price change, price path. A different order would split the effect "
-                       "slightly differently, but the start and end always match the cards above.")
+                       "attrition, performance payout, share price change, price path. A different order would "
+                       "split the effect slightly differently, but the start and end always match the cards above.")
+        with st.expander("Impact by award type"):
+            t_aw = compare_table(cur_ev, wi_ev, "award_type", "est_value_usd").sort_values("What-if", ascending=False)
+            st.dataframe(t_aw.round(0).reset_index().rename(columns={"award_type": "Award type"}), hide_index=True,
+                         column_config={c: st.column_config.NumberColumn(format="$%.0f")
+                                        for c in ("Current", "What-if", "Change")})
+            st.caption("Estimated value in the window, before and after your what-if, for each kind of award.")
+
+    # consequences of people events that are not upcoming vests
+    if is_whatif and any(a["kind"] != "leave" for a in ss["actions"]):
+        fx_ = get_side_effects(data_dir, as_of_ts, actions_key, rules_json, shock)
+        claw, lapse = fx_["clawback"], fx_["lapse"]
+        if not claw.empty or not lapse.empty:
+            st.markdown("**Also at stake**")
+            explain_box("These are consequences of your events that are <b>not</b> in the vesting totals above. "
+                        "<b>Clawback exposure</b> is value already delivered inside the lookback window that the plan "
+                        "could ask to take back. It is an amount at risk, not money recovered. "
+                        "<b>Options that could lapse</b> are vested options and SARs that stay usable only for a limited "
+                        "window after the event. The data has no exercise records, so this assumes none were exercised.")
+            st.markdown(kpi_html([
+                ("Clawback exposure", charts.short_money(claw["value_at_risk_usd"].sum()), None,
+                 f"{len(claw):,} delivered vests in the lookback"),
+                ("Options that could lapse", charts.short_money(lapse["gain_at_today_usd"].sum()), None,
+                 f"{len(lapse):,} vested lots, gain at today's price")]), unsafe_allow_html=True)
+            if not claw.empty:
+                with st.expander("Clawback exposure detail"):
+                    st.dataframe(claw, hide_index=True, column_config={
+                        "vest_date": st.column_config.DateColumn("Vested", format="YYYY-MM-DD"),
+                        "value_at_risk_usd": st.column_config.NumberColumn("At risk (USD)", format="$%.0f")})
+            if not lapse.empty:
+                with st.expander("Options that could lapse, detail"):
+                    st.dataframe(lapse, hide_index=True, column_config={
+                        "exercisable_until": st.column_config.DateColumn("Exercisable until", format="YYYY-MM-DD"),
+                        "gain_at_today_usd": st.column_config.NumberColumn("Gain today (USD)", format="$%.0f")})
 
     # up next
     if not ev.empty:
@@ -778,12 +1008,12 @@ with tab_over:
                         "up", 1 if attr else 0)
 
         # where it vests
-        dims = [("company", "By company"), ("country", "By country")]
+        dims = [("company", "By company"), ("country", "By country"), ("award_type", "By award type")]
         if n_cos == 1:
-            dims = [("country", "By country"), ("department", "By department")]
+            dims = [("country", "By country"), ("department", "By department"), ("award_type", "By award type")]
         st.markdown("**Where it vests**")
         bm = "est_value_usd"
-        cols = st.columns(2)
+        cols = st.columns(3)
         for col, (key, title) in zip(cols, dims):
             with col:
                 st.caption(title + (" (grey tick = current schedule)" if is_whatif and not neutral else ""))
@@ -796,9 +1026,10 @@ with tab_over:
                 bdf, bspec = charts.bullet_chart(t.index, shown, base, True)
                 st.vega_lite_chart(bdf, bspec, use_container_width=True)
         with st.expander("Show breakdown tables"):
-            m_label = st.radio("Measure ", ["Estimated value (USD)", "Shares vesting"], horizontal=True)
-            tm = "est_value_usd" if m_label.startswith("Estimated") else "shares_vesting"
-            for key, title in (("month", "By month"), ("company", "By company"), ("country", "By country")):
+            m_label = st.radio("Measure ", ["Estimated value (USD)", "Units vesting"], horizontal=True)
+            tm = "est_value_usd" if m_label.startswith("Estimated") else "share_units"
+            for key, title in (("month", "By month"), ("company", "By company"), ("country", "By country"),
+                               ("award_type", "By award type")):
                 st.markdown(f"**{title}**")
                 if is_whatif:
                     t = compare_table(cur_ev, wi_ev, key, tm)
@@ -839,7 +1070,7 @@ with tab_events:
                                file_name="vesting_events_filtered.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                use_container_width=True)
-            layout = (st.segmented_control("Layout", ["Cards", "Table"], default="Cards", key="ev_layout")
+            layout = (st.segmented_control("Layout", ["Cards", "Table"], key="ev_layout")
                       if hasattr(st, "segmented_control")
                       else st.radio("Layout", ["Cards", "Table"], horizontal=True, key="ev_layout")) or "Cards"
             if layout == "Cards":
@@ -852,15 +1083,19 @@ with tab_events:
                         st.rerun()
             else:
                 all_cols = st.checkbox("Show all columns", value=False)
-                compact = ["vest_date", "company", "full_name", "country", "shares_vesting", "est_price_usd",
+                compact = ["vest_date", "company", "full_name", "award_type", "settlement", "shares_vesting", "est_price_usd",
                            "est_value_usd", "flags"]
                 share_fmt = "%.1f" if attr else "%.0f"
                 st.dataframe(
                     ev, hide_index=True, column_order=None if all_cols else compact,
                     column_config={
                         "vest_date": st.column_config.DateColumn("Vest date", format="YYYY-MM-DD"),
-                        "shares_vesting": st.column_config.NumberColumn("Shares", format=share_fmt),
-                        "est_price_usd": st.column_config.NumberColumn("Est. price", format="$%.2f"),
+                        "award_type": "Type", "settlement": "Paid in",
+                        "shares_vesting": st.column_config.NumberColumn("Units", format=share_fmt),
+                        "strike_price": st.column_config.NumberColumn("Strike", format="$%.2f"),
+                        "est_unit_value_usd": st.column_config.NumberColumn("Value per unit", format="$%.2f"),
+                        "payout_pct": st.column_config.NumberColumn("Payout %", format="%.0f"),
+                        "est_price_usd": st.column_config.NumberColumn("Share price", format="$%.2f"),
                         "est_price_low": st.column_config.NumberColumn("Price low", format="$%.2f"),
                         "est_price_high": st.column_config.NumberColumn("Price high", format="$%.2f"),
                         "est_value_usd": st.column_config.NumberColumn("Est. value (USD)", format="$%.0f"),
@@ -868,7 +1103,7 @@ with tab_events:
                         "est_value_high": st.column_config.NumberColumn("Value high", format="$%.0f"),
                         "est_value_local": st.column_config.NumberColumn("Est. value (local)", format="%.0f"),
                     })
-            st.caption("Shares are gross, before tax withholding. Orange notes mark items needing review.")
+            st.caption("Units are gross, before tax withholding. Options and SARs show the gain over the strike. Orange notes mark items needing review.")
 
 # ------------------------------------------------------------------ people
 with tab_people:
@@ -888,6 +1123,164 @@ with tab_people:
         st.write(f"{len(emp_grants)} grant(s), each on its own schedule")
         st.dataframe(emp_grants, hide_index=True)
         st.dataframe(ev[ev["employee_id"] == pick], hide_index=True)
+
+# ------------------------------------------------------------------ rules and guide
+def bump_rules():
+    ss["rules_ver"] += 1
+
+
+def reset_all_rules():
+    ss["rules"] = {}
+    ss["rules_ver"] += 1
+
+
+def reset_event_rules(scope_key, event):
+    ss["rules"].get(scope_key, {}).pop(event, None)
+    ss["rules_ver"] += 1
+
+
+with tab_rules:
+    r_view = (st.segmented_control("Section", ["Learn", "Edit rules"], key="r_view")
+              if hasattr(st, "segmented_control")
+              else st.radio("Section", ["Learn", "Edit rules"], horizontal=True, key="r_view")) or "Learn"
+
+    if r_view == "Learn":
+        topic = st.selectbox("What do you want to learn about?",
+                             ["Award types", "What-if events", "What happens to an award (treatments)",
+                              "How the numbers are calculated", "Glossary"], key="g_topic")
+        if topic == "Award types":
+            st.markdown("**At a glance**")
+            st.dataframe(pd.DataFrame(
+                [{"Award type": a, "Paid in": v[0], "Value in this app": v[1], "Depends on performance": v[2],
+                  "Has a strike price": v[3]} for a, v in learn.SUMMARY.items()]), hide_index=True,
+                use_container_width=True)
+            aw = st.selectbox("Open one award type", R.AWARD_TYPES, key="g_award")
+            info = learn.AWARDS[aw]
+            st.markdown(f"### {info['name']}")
+            st.markdown(f"*{info['tagline']}*")
+            explain_box(f"<b>What it is.</b> {hx(info['what'])}<br><b>What the holder gets.</b> {hx(info['pays'])}"
+                        f"<br><b>How this app values it.</b> {hx(info['value'])}")
+            st.markdown("**Watch out for**")
+            for w in info["watch"]:
+                st.markdown("- " + md(w))
+            exs = cur_all[(cur_all["award_type"] == aw) & (cur_all["est_value_usd"] > 0)].sort_values("vest_date").head(1)
+            if not exs.empty:
+                x = exs.iloc[0]
+                explain_box(f"<b>Example from the data.</b> {hx(x['full_name'])} at {hx(x['company'])}, vesting "
+                            f"{x['vest_date']:%b %d, %Y}:<br>{hx(example_text(x))}")
+                st.button(f"Open {x['full_name']}'s profile", key=f"g_open_{aw}", on_click=open_emp,
+                          kwargs={"emp": x["employee_id"]})
+        elif topic == "What-if events":
+            ev_key = st.selectbox("Event", list(R.EVENTS), format_func=R.EVENTS.get, key="g_event")
+            info = learn.EVENTS[ev_key]
+            st.markdown(f"### {R.EVENTS[ev_key]}")
+            explain_box(f"<b>What it is.</b> {hx(info['what'])}<br><b>What typically happens.</b> {hx(info['typical'])}"
+                        f"<br><b>Why it matters.</b> {hx(info['matters'])}")
+            st.markdown("**What this app does by default, by award type**")
+            st.dataframe(pd.DataFrame({"Award type": R.AWARD_TYPES,
+                                       "Default treatment": [R.DEFAULT_TREATMENTS[ev_key][a] for a in R.AWARD_TYPES]}),
+                         hide_index=True, use_container_width=True)
+            if ev_key != "leave":
+                st.caption(f"Vested options and SARs stay exercisable for {R.DEFAULT_WINDOW_DAYS[ev_key]} days by default"
+                           + (f"; the clawback lookback is {R.DEFAULT_CLAWBACK_MONTHS[ev_key]} months."
+                              if R.DEFAULT_CLAWBACK_MONTHS[ev_key] else "; no clawback."))
+            st.caption("These defaults are examples of typical practice. Change them under Edit rules.")
+        elif topic.startswith("What happens"):
+            for name, text in learn.TREATMENTS.items():
+                st.markdown(f"**{name}.** {md(text)}")
+        elif topic.startswith("How the numbers"):
+            for title, text in learn.HOW_NUMBERS_WORK:
+                with st.expander(title):
+                    st.markdown(md(text))
+        else:
+            for term, text in learn.GLOSSARY.items():
+                with st.expander(term):
+                    st.markdown(md(text))
+        st.caption(learn.NOTE)
+
+    else:
+        explain_box("<b>Plan rules</b> decide what happens to each award type when something happens to a person. "
+                    "The starting values are typical practice, not your company's actual plan. Change them for all "
+                    "companies, or for one company, to match the plan documents. Changes apply to what-if events "
+                    "straight away, and last for this visit only, so download them to keep a copy.")
+        companies_all = sorted(data["companies"]["company_name"])
+        s1, s2 = st.columns(2)
+        scope_label = s1.selectbox("Applies to", [SCOPE_ALL] + companies_all, key="r_scope")
+        ev_key = s2.selectbox("Event", list(R.EVENTS), format_func=R.EVENTS.get, key="r_event")
+        scope_key = R.DEFAULT_SCOPE if scope_label == SCOPE_ALL else scope_label
+        company_arg = None if scope_key == R.DEFAULT_SCOPE else scope_key
+        base_rules = (R.default_rules() if company_arg is None
+                      else R.resolve_rules({R.DEFAULT_SCOPE: ss["rules"].get(R.DEFAULT_SCOPE, {})}, None))
+        cur_rules = R.resolve_rules(ss["rules"], company_arg)
+        info = learn.EVENTS[ev_key]
+        st.caption(f"{info['what']} {info['typical']}")
+
+        opts = R.LEAVE_TREATMENTS if ev_key == "leave" else R.DEPARTURE_TREATMENTS
+        tbl = pd.DataFrame({"Award type": R.AWARD_TYPES,
+                            "What happens": [cur_rules[ev_key]["treatments"][a] for a in R.AWARD_TYPES],
+                            "Starting value": [base_rules[ev_key]["treatments"][a] for a in R.AWARD_TYPES]})
+        edited = st.data_editor(
+            tbl, hide_index=True, use_container_width=True, disabled=["Award type", "Starting value"],
+            key=f"rules_ed_{ss['rules_ver']}_{scope_key}_{ev_key}",
+            column_config={"What happens": st.column_config.SelectboxColumn("What happens", options=opts, required=True)})
+        new_tr, bad = {}, []
+        for _, row in edited.iterrows():
+            ok = row["What happens"] in R.allowed_treatments(ev_key, row["Award type"])
+            new_tr[row["Award type"]] = row["What happens"] if ok else base_rules[ev_key]["treatments"][row["Award type"]]
+            if not ok:
+                bad.append(row["Award type"])
+        if bad:
+            st.warning(f"{', '.join(bad)}: that choice is not available for this award, so the starting value was kept. "
+                       "An ESPP can only be forfeited or continue, because it has no unvested shares to accelerate.")
+        new_rule = {"treatments": new_tr, "window_days": cur_rules[ev_key]["window_days"],
+                    "clawback_months": cur_rules[ev_key]["clawback_months"]}
+        if ev_key != "leave":
+            n1, n2 = st.columns(2)
+            new_rule["window_days"] = int(n1.number_input(
+                "Vested options and SARs stay exercisable for (days)", 0, 3650, cur_rules[ev_key]["window_days"], 15,
+                key=f"r_win_{ss['rules_ver']}_{scope_key}_{ev_key}",
+                help="After this many days, vested options and SARs that were not exercised lapse."))
+            new_rule["clawback_months"] = int(n2.number_input(
+                "Clawback lookback (months, 0 = none)", 0, 120, cur_rules[ev_key]["clawback_months"], 1,
+                key=f"r_claw_{ss['rules_ver']}_{scope_key}_{ev_key}",
+                help="Value delivered in this many months before the event is shown as clawback exposure."))
+        new_ov = R.diff_to_overrides({ev_key: new_rule}, {ev_key: base_rules[ev_key]})
+        scope_ov = dict(ss["rules"].get(scope_key, {}))
+        if ev_key in new_ov:
+            scope_ov[ev_key] = new_ov[ev_key]
+        else:
+            scope_ov.pop(ev_key, None)
+        updated = {**{k: v for k, v in ss["rules"].items() if k != scope_key}, **({scope_key: scope_ov} if scope_ov else {})}
+        if json.dumps(updated, sort_keys=True) != rules_json:
+            ss["rules"] = updated
+            st.rerun()
+
+        n_custom = R.count_overrides(ss["rules"], scope_key)
+        st.caption(f"{n_custom} customized setting(s) for {scope_label.lower() if scope_key == R.DEFAULT_SCOPE else scope_label}."
+                   if n_custom else "Nothing customized here: using the starting values.")
+        b1, b2 = st.columns(2)
+        b1.button("Reset this event", on_click=reset_event_rules, kwargs={"scope_key": scope_key, "event": ev_key},
+                  use_container_width=True)
+        b2.button("Reset all rules", on_click=reset_all_rules, use_container_width=True)
+        with st.expander("All events at a glance"):
+            st.dataframe(pd.DataFrame(R.rules_matrix(cur_rules)), hide_index=True)
+            st.caption("Rows are events, columns are award types. Shows the rules for "
+                       f"{'all companies' if company_arg is None else company_arg}.")
+        with st.expander("Save or load my rules"):
+            st.download_button("Download my rules (JSON)", json.dumps(ss["rules"], indent=2, sort_keys=True).encode("utf-8"),
+                               file_name="plan_rules.json", mime="application/json", use_container_width=True)
+            up = st.file_uploader("Load rules from a file", type=["json"], key=f"r_upload_{ss['rules_ver']}")
+            if up is not None:
+                try:
+                    loaded = R.clean_overrides(json.loads(up.getvalue().decode("utf-8")))
+                except (ValueError, UnicodeDecodeError):
+                    st.error("That file is not valid rules JSON.")
+                else:
+                    ss["rules"] = loaded
+                    ss["rules_ver"] += 1
+                    st.rerun()
+        st.caption("PSU and performance cash payouts are set per company in the what-if builder, on the "
+                   "Performance payout tab.")
 
 # ------------------------------------------------------------------ reports and data
 with tab_report:
@@ -916,7 +1309,7 @@ with tab_report:
     st.divider()
     st.markdown("**Data**")
     with st.expander("Data source"):
-        st.text_input("Data folder", value=DEFAULT_DIR, key="data_dir")
+        st.text_input("Data folder", key="data_dir")
     findings = get_findings(data_dir)
     if findings.empty:
         st.success("All data checks passed.")

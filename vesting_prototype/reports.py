@@ -7,14 +7,16 @@ import pandas as pd
 
 DISCLAIMER = (
     "Estimated prices and values are illustrative projections based on the assumptions listed in this "
-    "report. They are not forecasts, guarantees or investment advice. Share counts are gross, before any "
-    "tax withholding or sell-to-cover, which varies by country. This report is not tax or legal advice."
+    "report. They are not forecasts, guarantees or investment advice. Unit counts are gross, before any "
+    "tax withholding or sell-to-cover, which varies by country. Options and SARs are valued at their gain over "
+    "the strike price; performance cash units are US dollars. This report is not tax or legal advice."
 )
 
 DETAIL_COLUMNS = {
     "vest_date": "Vest date", "company": "Company", "employee_id": "Employee ID", "full_name": "Employee", "country": "Country",
-    "grant_id": "Grant", "award_type": "Award", "shares_vesting": "Shares",
-    "est_price_usd": "Est. price (USD)", "est_value_usd": "Est. value (USD)",
+    "grant_id": "Grant", "award_type": "Award", "settlement": "Paid in", "shares_vesting": "Units",
+    "strike_price": "Strike (USD)", "payout_pct": "Payout %",
+    "est_price_usd": "Share price (USD)", "est_value_usd": "Est. value (USD)",
     "est_value_low": "Low (USD)", "est_value_high": "High (USD)",
     "local_currency": "Local ccy", "est_value_local": "Est. value (local)", "flags": "Review flags",
 }
@@ -45,6 +47,10 @@ def assumptions_table(meta: dict) -> pd.DataFrame:
         ("Filters applied", meta.get("filters") or "None"),
         ("View", meta.get("view", "Current schedule")),
     ]
+    rows.append(("Performance payout (PSUs, performance cash)", meta.get("payout_text", "100% of target")))
+    rows.append(("Plan rules for what-if events", meta.get("rules_text", "Typical defaults")))
+    if meta.get("award_note"):
+        rows.append(("How awards are valued", meta["award_note"]))
     if meta.get("levers"):
         rows.append(("What-if assumptions", meta["levers"]))
     if meta.get("data_note"):
@@ -71,10 +77,18 @@ def build_excel(events: pd.DataFrame, summaries: dict, meta: dict,
         month = month.drop(columns=["Low (USD)", "High (USD)"], errors="ignore")
         country = country.drop(columns=["Low (USD)", "High (USD)"], errors="ignore")
         company = company.drop(columns=["Low (USD)", "High (USD)"], errors="ignore")
+    award = summaries["by_award"].rename(columns={
+        "award_type": "Award type", "events": "Events", "shares": "Units", "est_value_usd": "Est. value (USD)",
+        "est_value_low": "Low (USD)", "est_value_high": "High (USD)"})
+    if meta["scenario"] != "Range (bear / base / bull)":
+        award = award.drop(columns=["Low (USD)", "High (USD)"], errors="ignore")
+    for df_ in (month, country, company):
+        df_.rename(columns={"Shares": "Units"}, inplace=True)
     sheets = [("By Month", month)]
     if events["company"].nunique() > 1:
         sheets.append(("By Company", company))
     sheets.append(("By Country", country))
+    sheets.append(("By Award Type", award))
 
     with pd.ExcelWriter(buf, engine="xlsxwriter") as xw:
         wb = xw.book
@@ -93,13 +107,18 @@ def build_excel(events: pd.DataFrame, summaries: dict, meta: dict,
         ws.write(1, 0, f"Report date {meta['report_date']} | {meta['window']} | Scenario: {meta['scenario']} | "
                        f"{meta.get('view', 'Current schedule')}", base)
         ws.write(3, 0, "Events", bold); ws.write_number(3, 1, len(events), num)
-        ws.write(4, 0, "Shares vesting", bold); ws.write_number(4, 1, float(events["shares_vesting"].sum()), num)
+        ws.write(4, 0, "Units vesting (excl. performance cash)", bold)
+        ws.write_number(4, 1, float(events["share_units"].sum()), num)
         ws.write(5, 0, "Estimated value (USD)", bold); ws.write_number(5, 1, float(events["est_value_usd"].sum()), money)
+        ws.write(6, 0, "  paid in shares (USD)", base)
+        ws.write_number(6, 1, float(events.loc[events["settlement"] == "Shares", "est_value_usd"].sum()), money)
+        ws.write(7, 0, "  paid in cash (USD)", base)
+        ws.write_number(7, 1, float(events.loc[events["settlement"] == "Cash", "est_value_usd"].sum()), money)
         if meta["scenario"].startswith("Range"):
-            ws.write(6, 0, "Low / High (USD)", bold)
-            ws.write(6, 1, f"${events['est_value_low'].sum():,.0f} / ${events['est_value_high'].sum():,.0f}", base)
-        ws.write(8, 0, DISCLAIMER, wrap)
-        ws.set_row(8, 75)
+            ws.write(8, 0, "Low / High (USD)", bold)
+            ws.write(8, 1, f"${events['est_value_low'].sum():,.0f} / ${events['est_value_high'].sum():,.0f}", base)
+        ws.write(10, 0, DISCLAIMER, wrap)
+        ws.set_row(10, 90)
         ws.set_column(0, 0, 28, base); ws.set_column(1, 1, 22, base)
 
         for name, df in sheets:
@@ -107,7 +126,7 @@ def build_excel(events: pd.DataFrame, summaries: dict, meta: dict,
             s = xw.sheets[name]
             for i, c in enumerate(df.columns):
                 s.write(0, i, c, hdr)
-                s.set_column(i, i, 18, money if "USD" in c else (num if c in ("Events", "Shares") else base))
+                s.set_column(i, i, 18, money if "USD" in c else (num if c in ("Events", "Units") else base))
             s.freeze_panes(1, 0)
 
         if include_detail:
@@ -116,7 +135,7 @@ def build_excel(events: pd.DataFrame, summaries: dict, meta: dict,
             s = xw.sheets["Events"]
             for i, c in enumerate(det.columns):
                 s.write(0, i, c, hdr)
-                fmt = money if "USD" in c or "local" in c else (num if c == "Shares" else base)
+                fmt = money if "USD" in c or "local" in c else (num if c == "Units" else base)
                 s.set_column(i, i, 40 if c == "Review flags" else 16, fmt)
             s.freeze_panes(1, 0)
             s.autofilter(0, 0, len(det), len(det.columns) - 1)
@@ -162,7 +181,7 @@ def build_pdf(events: pd.DataFrame, summaries: dict, meta: dict,
         return t
 
     def fmt_summary(df: pd.DataFrame, key: str, label: str) -> pd.DataFrame:
-        out = pd.DataFrame({label: df[key], "Events": df["events"], "Shares": df["shares"].map("{:,.0f}".format),
+        out = pd.DataFrame({label: df[key], "Events": df["events"], "Units": df["shares"].map("{:,.0f}".format),
                             "Est. value (USD)": df["est_value_usd"].map("${:,.0f}".format)})
         if meta["scenario"].startswith("Range"):
             out["Low (USD)"] = df["est_value_low"].map("${:,.0f}".format)
@@ -174,8 +193,10 @@ def build_pdf(events: pd.DataFrame, summaries: dict, meta: dict,
                     f"Scenario: {meta['scenario']} &nbsp;|&nbsp; {meta.get('view', 'Current schedule')}",
                     styles["BodyText"]), Spacer(1, 8)]
 
-    kpi = [["Events", "Shares vesting", "Estimated value (USD)"],
-           [f"{len(events):,}", f"{events['shares_vesting'].sum():,.0f}", f"${events['est_value_usd'].sum():,.0f}"]]
+    cash = events.loc[events["settlement"] == "Cash", "est_value_usd"].sum()
+    kpi = [["Events", "Units vesting", "Estimated value (USD)", "Paid in shares", "Paid in cash"],
+           [f"{len(events):,}", f"{events['share_units'].sum():,.0f}", f"${events['est_value_usd'].sum():,.0f}",
+            f"${events['est_value_usd'].sum() - cash:,.0f}", f"${cash:,.0f}"]]
     if meta["scenario"].startswith("Range"):
         kpi[0].append("Low - High (USD)")
         kpi[1].append(f"${events['est_value_low'].sum():,.0f} - ${events['est_value_high'].sum():,.0f}")
@@ -191,13 +212,19 @@ def build_pdf(events: pd.DataFrame, summaries: dict, meta: dict,
                   table(fmt_summary(summaries["by_company"], "company", "Company")), Spacer(1, 8)]
                  if events["company"].nunique() > 1 else []),
                Paragraph("By country", styles["Heading3"]),
-               table(fmt_summary(summaries["by_country"], "country", "Country")), Spacer(1, 8)]
+               table(fmt_summary(summaries["by_country"], "country", "Country")), Spacer(1, 8),
+               Paragraph("By award type", styles["Heading3"]),
+               table(fmt_summary(summaries["by_award"], "award_type", "Award type")), Spacer(1, 8)]
         if include_detail:
             det = _detail(events, show_names, meta["scenario"])
             for c in det.columns:
                 if "USD" in c or "local" in c:
                     det[c] = det[c].map("{:,.0f}".format) if "price" not in c else det[c].map("{:,.2f}".format)
-                elif c == "Shares":
+                elif c == "Units":
+                    det[c] = det[c].map("{:,.0f}".format)
+                elif c == "Strike (USD)":
+                    det[c] = det[c].map(lambda v: "" if pd.isna(v) else f"{v:,.2f}")
+                elif c == "Payout %":
                     det[c] = det[c].map("{:,.0f}".format)
             det = det.drop(columns=["Review flags"], errors="ignore")
             el += [Paragraph("Event detail", styles["Heading3"]), table(det, font=7), Spacer(1, 8)]

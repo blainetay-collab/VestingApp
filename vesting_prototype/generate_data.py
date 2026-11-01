@@ -1,4 +1,4 @@
-"""Generate a synthetic multi-company global RSU dataset for the vesting-tracker prototype.
+"""Generate a synthetic multi-company global equity dataset (9 award types) for the vesting-tracker prototype.
 
 All companies, people, emails, prices and FX rates are fictional / illustrative.
 Run:  python generate_data.py     (writes CSVs into ./data, or into $VESTING_DATA_DIR if set)
@@ -63,9 +63,24 @@ SCHEDULES = [
     ("4Y_1Y_CLIFF_MONTHLY", "4 years, 1-year cliff, then monthly", 48, 12, 1),
     ("3Y_1Y_CLIFF_ANNUAL", "3 years, 1-year cliff, then annually", 36, 12, 12),
     ("4Y_ANNUAL", "4 years, annual vesting (25% per year)", 48, 12, 12),
+    ("3Y_CLIFF_PERF", "3-year performance period, pays once at the end", 36, 36, 36),
+    ("ESPP_6M", "ESPP: a purchase every 6 months", 24, 6, 6),
 ]
 SCHED = {s[0]: s for s in SCHEDULES}
 SIZES = [200, 400, 600, 800, 1000, 1200, 1600, 2000, 2400, 3200, 4000]
+TIME_SCHEDULES = [x[0] for x in SCHEDULES[:4]]
+CASH_COUNTRIES = {"IN", "BR", "PL", "JP"}          # share issuance is hard here, so cash-settled awards are common
+ESPP_COUNTRIES = {"US", "GB", "IE", "DE", "FR", "NL", "CA", "SG", "AU", "JP"}
+CASH_AWARDS = {"SAR (cash-settled)", "Phantom Stock", "Performance Cash"}
+OPTION_LIKE = {"Stock Option", "SAR (stock-settled)", "SAR (cash-settled)"}
+PERF_METRICS = ["Relative TSR", "Revenue growth", "EBITDA margin", "Earnings per share"]
+
+
+def pick_award(code):
+    if code in CASH_COUNTRIES:
+        return random.choices(["Phantom Stock", "SAR (cash-settled)", "RSU"], weights=[40, 25, 35])[0]
+    return random.choices(["RSU", "PSU", "Restricted Stock", "Stock Option", "SAR (stock-settled)",
+                           "Phantom Stock", "Performance Cash"], weights=[58, 11, 5, 13, 5, 3, 5])[0]
 
 
 def gen_tranches(total, sched_id, start):
@@ -74,7 +89,7 @@ def gen_tranches(total, sched_id, start):
     first = int(total * C / T)
     rest = total - first
     n = len(months) - 1
-    base = rest // n
+    base = rest // n if n else 0
     shares = [first] + [base] * n
     shares[-1] += total - sum(shares)
     return [(start + relativedelta(months=m), s) for m, s in zip(months, shares)]
@@ -106,8 +121,33 @@ for e in random.sample(eligible, int(len(employees) * 0.04)):
 for e in random.sample([x for x in employees if x["employment_status"] == "Active"], int(len(employees) * 0.05)):
     e["tax_residency_country"] = random.choice([c for c in COUNTRIES if c[1] != e["country_code"]])[0]
 
+# ---------- Price history (also used for ESPP offering prices) ----------
+hist_rows = []
+for c in COMPANIES:
+    prices = [c[6]]
+    for _ in range(23):
+        prices.append(prices[-1] / (1 + random.gauss(0.01, 0.07)))
+    prices = prices[::-1]
+    for i, p in enumerate(prices):
+        d = AS_OF if i == 23 else AS_OF.replace(day=1) - relativedelta(months=23 - i)
+        hist_rows.append({"ticker": c[2], "price_date": d, "close_usd": round(p, 2)})
+HIST = {}
+for r in hist_rows:
+    HIST.setdefault(r["ticker"], []).append((r["price_date"], r["close_usd"]))
+
+
+def px(ticker, d):
+    """Closing price on or before d (earliest price if d is before the history starts)."""
+    best = HIST[ticker][0][1]
+    for pd_, p in HIST[ticker]:
+        if pd_ <= d:
+            best = p
+    return best
+
+
 # ---------- Grants & tranches ----------
 ticker_of = {c[0]: c[2] for c in COMPANIES}
+price_of = {c[0]: c[6] for c in COMPANIES}
 grants, tranches = [], []
 g = t = 0
 for e in employees:
@@ -120,8 +160,10 @@ for e in employees:
         nxt = nxt + relativedelta(years=1, days=random.randint(-30, 45))
     for gd in dates:
         g += 1
-        sched = random.choices([s[0] for s in SCHEDULES], weights=[5, 3, 1, 2])[0]
-        total = random.choice(SIZES)
+        award = pick_award(e["country_code"])
+        perf = award in ("PSU", "Performance Cash")
+        sched = "3Y_CLIFF_PERF" if perf else random.choices(TIME_SCHEDULES, weights=[5, 3, 1, 2])[0]
+        total = random.choice([10000, 20000, 30000, 50000]) if award == "Performance Cash" else random.choice(SIZES)
         gid = f"G{g:06d}"
         forfeited = False
         for vd, sh in gen_tranches(total, sched, gd):
@@ -133,28 +175,67 @@ for e in employees:
             else:
                 status = "Unvested"
             tranches.append({"tranche_id": f"T{t:07d}", "grant_id": gid, "employee_id": e["employee_id"],
-                             "vest_date": vd, "shares_vesting": sh, "status": status})
+                             "vest_date": vd, "shares_vesting": sh, "status": status,
+                             "contribution_usd": None, "offering_start_date": None, "offering_start_price": None})
         grants.append({
-            "grant_id": gid, "employee_id": e["employee_id"], "grant_date": gd, "award_type": "RSU",
+            "grant_id": gid, "employee_id": e["employee_id"], "grant_date": gd, "award_type": award,
             "ticker": ticker_of[e["company_id"]], "total_shares": total, "vesting_start_date": gd,
-            "vesting_schedule_id": sched, "grant_currency": "USD", "strike_price": None,
+            "vesting_schedule_id": sched, "grant_currency": "USD",
+            "strike_price": round(price_of[e["company_id"]] * random.uniform(0.5, 1.2), 2) if award in OPTION_LIKE else None,
             "grant_status": "Cancelled (termination)" if forfeited else "Active",
+            "settlement": "Cash" if award in CASH_AWARDS else "Shares",
+            "expiry_date": gd + relativedelta(years=10) if award in OPTION_LIKE else None,
+            "perf_metric": random.choice(PERF_METRICS) if perf else None,
+            "perf_max_pct": (200 if award == "PSU" else 150) if perf else None,
+            "election_83b": (random.random() < 0.5) if award == "Restricted Stock" else None,
+            "purchase_discount": None, "lookback": None,
         })
+
+# ---------- ESPP: purchases every 6 months through payroll deductions ----------
+OFFERINGS = []                                   # (offering start, purchase date)
+d0 = date(2024, 10, 1)
+while True:
+    pdate = (d0 + relativedelta(months=6)) - timedelta(days=1)
+    if pdate > date(2028, 3, 31):
+        break
+    OFFERINGS.append((d0, pdate))
+    d0 = d0 + relativedelta(months=6)
+for e in employees:
+    if (e["employment_status"] != "Active" or e["country_code"] not in ESPP_COUNTRIES
+            or e["hire_date"] > AS_OF - timedelta(days=270) or random.random() > 0.28):
+        continue
+    mine = [o for o in OFFERINGS if o[0] >= e["hire_date"] + timedelta(days=60)]
+    if not mine:
+        continue
+    g += 1
+    gid, tick = f"G{g:06d}", ticker_of[e["company_id"]]
+    contrib = random.choice([1500, 2000, 2500, 3000, 4000, 5000, 6000])
+    total = 0.0
+    for start, pdate in mine:
+        t += 1
+        if pdate <= AS_OF:
+            sp, bp = px(tick, start), px(tick, pdate)
+            sh, status, start_price = round(contrib / (0.85 * min(sp, bp)), 2), "Vested", sp
+        else:
+            start_price = px(tick, start) if start <= AS_OF else None
+            sh, status = round(contrib / (0.85 * px(tick, AS_OF)), 2), "Unvested"
+        total += sh
+        tranches.append({"tranche_id": f"T{t:07d}", "grant_id": gid, "employee_id": e["employee_id"],
+                         "vest_date": pdate, "shares_vesting": sh, "status": status, "contribution_usd": contrib,
+                         "offering_start_date": start, "offering_start_price": start_price})
+    grants.append({
+        "grant_id": gid, "employee_id": e["employee_id"], "grant_date": mine[0][0], "award_type": "ESPP",
+        "ticker": tick, "total_shares": round(total, 2), "vesting_start_date": mine[0][0],
+        "vesting_schedule_id": "ESPP_6M", "grant_currency": "USD", "strike_price": None, "grant_status": "Active",
+        "settlement": "Shares", "expiry_date": None, "perf_metric": None, "perf_max_pct": None,
+        "election_83b": None, "purchase_discount": 0.15, "lookback": True,
+    })
 
 # ---------- Reference tables ----------
 companies = pd.DataFrame([{"company_id": c[0], "company_name": c[1], "ticker": c[2], "industry": c[3],
                            "hq_country": next(k[0] for k in COUNTRIES if k[1] == c[4])} for c in COMPANIES])
 market = pd.DataFrame([{"ticker": c[2], "company": c[1], "price_usd": c[6], "price_date": AS_OF,
                         "annual_volatility": c[7], "assumed_annual_growth": c[8]} for c in COMPANIES])
-hist_rows = []
-for c in COMPANIES:
-    prices = [c[6]]
-    for _ in range(23):
-        prices.append(prices[-1] / (1 + random.gauss(0.01, 0.07)))
-    prices = prices[::-1]
-    for i, p in enumerate(prices):
-        d = AS_OF if i == 23 else AS_OF.replace(day=1) - relativedelta(months=23 - i)
-        hist_rows.append({"ticker": c[2], "price_date": d, "close_usd": round(p, 2)})
 fx = pd.DataFrame([{"currency": cur, "units_per_usd": rate, "rate_date": AS_OF, "source": "Illustrative (synthetic)"}
                    for cur, rate in sorted({(c[2], c[3]) for c in COUNTRIES})])
 

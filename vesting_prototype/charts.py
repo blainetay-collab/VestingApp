@@ -145,7 +145,10 @@ STATUS_SCALE = {"domain": ["Vested", "Upcoming", "Forfeited"], "range": [PAST, U
 def grant_timeline(sched: pd.DataFrame, today: pd.Timestamp, height: int | None = None):
     """One row per grant. A line spans the grant's vesting period, a dot marks each vest (bigger = more shares),
     and a dashed orange line marks today. sched needs: grant_id, vest_date, shares_vesting, status."""
-    df = sched[["grant_id", "vest_date", "shares_vesting", "status"]].copy()
+    df = sched[["grant_id", "vest_date", "shares_vesting", "status"] + (["award_type"] if "award_type" in sched else [])
+               + (["share_of_grant"] if "share_of_grant" in sched else [])].copy()
+    if "share_of_grant" not in df:
+        df["share_of_grant"] = df["shares_vesting"] / df.groupby("grant_id")["shares_vesting"].transform("sum")
     n = df["grant_id"].nunique()
     y = {"field": "grant_id", "type": "nominal", "sort": None, "axis": {"title": None, "grid": False}}
     spec = {
@@ -157,14 +160,16 @@ def grant_timeline(sched: pd.DataFrame, today: pd.Timestamp, height: int | None 
                           "x2": {"field": "vest_date", "aggregate": "max"}}},
             {"mark": {"type": "point", "filled": True, "opacity": 0.9, "stroke": "#FFFFFF", "strokeWidth": 0.5},
              "encoding": {"y": y, "x": {"field": "vest_date", "type": "temporal"},
-                          "size": {"field": "shares_vesting", "type": "quantitative", "legend": None,
+                          "size": {"field": "share_of_grant", "type": "quantitative", "legend": None,
                                    "scale": {"range": [30, 380]}},
                           "color": {"field": "status", "type": "nominal", "scale": STATUS_SCALE},
                           "tooltip": [{"field": "grant_id", "title": "Grant"},
                                       {"field": "vest_date", "type": "temporal", "title": "Vest date",
                                        "format": "%b %d, %Y"},
-                                      {"field": "shares_vesting", "type": "quantitative", "title": "Shares",
+                                      {"field": "shares_vesting", "type": "quantitative", "title": "Units",
                                        "format": ",.0f"},
+                                      {"field": "share_of_grant", "type": "quantitative", "title": "Share of grant",
+                                       "format": ".0%"},
                                       {"field": "status", "title": "Status"}]}},
             {"mark": {"type": "rule", "color": FORFEIT, "strokeDash": [4, 4], "strokeWidth": 1.5},
              "encoding": {"x": {"datum": {"year": today.year, "month": today.month, "date": today.day},
