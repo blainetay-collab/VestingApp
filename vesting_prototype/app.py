@@ -53,7 +53,7 @@ CARD_PAGE = 24
 st.markdown(
     """<style>
     /* layout */
-    [data-testid="stMainBlockContainer"],.block-container{max-width:1200px;padding-top:1.6rem}
+    [data-testid="stMainBlockContainer"],.block-container{max-width:1200px;padding-top:4.5rem}
     .hdr{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin:0 0 .15rem 0}
     .hdr-t{font-size:1.65rem;font-weight:700;letter-spacing:-.01em;line-height:1.2}
     .badge{font-size:.68rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em;padding:.15rem .5rem;
@@ -104,7 +104,7 @@ st.markdown(
     .st-key-presets [data-testid="stHorizontalBlock"]{flex-wrap:nowrap !important;gap:.5rem}
     .st-key-presets [data-testid="stColumn"]{min-width:0 !important;width:auto !important;flex:1 1 0 !important}
     @media (max-width:640px){
-      [data-testid="stMainBlockContainer"],.block-container{padding-left:.8rem;padding-right:.8rem;padding-top:1rem}
+      [data-testid="stMainBlockContainer"],.block-container{padding-left:.8rem;padding-right:.8rem;padding-top:4rem}
       .hdr-t{font-size:1.35rem}
       .hero{padding:.9rem 1rem}
       .hero-v{font-size:2.2rem}
