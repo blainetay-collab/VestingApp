@@ -127,8 +127,12 @@ else:
     _sec = st.radio("Section", [SEC_APP, SEC_AI], horizontal=True, key="section", label_visibility="collapsed")
 if _sec == SEC_AI:
     # keep the vesting tool's widget state while its widgets are not drawn (Streamlit drops it otherwise)
-    for _k in list(st.session_state.keys()):
-        if _k != "section":
+    # Only these keys: re-saving a button or download button key makes Streamlit raise an error later.
+    for _k in ("mode", "f_company", "f_country", "f_dept", "f_award", "f_search", "ev_layout", "data_dir", "r_view",
+               "r_scope", "r_event", "g_topic", "g_award", "g_event", "o_horizon", "o_split", "o_measure", "o_cumul",
+               "w_scenario", "w_shock", "w_own", "w_growth", "w_vol", "w_attr", "w_pay_all", "w_who", "w_kind", "w_ids",
+               "w_date", "w_months"):
+        if _k in st.session_state:
             try:
                 st.session_state[_k] = st.session_state[_k]
             except Exception:
