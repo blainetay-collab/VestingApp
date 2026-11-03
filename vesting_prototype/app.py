@@ -14,6 +14,7 @@ import pandas as pd
 import streamlit as st
 
 import charts
+import ai_story
 import engine
 import learn
 import reports
@@ -117,6 +118,25 @@ st.markdown(
 
 
 # ------------------------------------------------------------------ helpers
+# ------------------------------------------------------------------ top-level section switch
+SEC_APP, SEC_AI = "Vesting tool", "How I used AI"
+st.session_state.setdefault("section", SEC_APP)
+if hasattr(st, "segmented_control"):
+    _sec = st.segmented_control("Section", [SEC_APP, SEC_AI], key="section", label_visibility="collapsed") or SEC_APP
+else:
+    _sec = st.radio("Section", [SEC_APP, SEC_AI], horizontal=True, key="section", label_visibility="collapsed")
+if _sec == SEC_AI:
+    # keep the vesting tool's widget state while its widgets are not drawn (Streamlit drops it otherwise)
+    for _k in list(st.session_state.keys()):
+        if _k != "section":
+            try:
+                st.session_state[_k] = st.session_state[_k]
+            except Exception:
+                pass
+    ai_story.render()
+    st.stop()
+
+
 def md(text: str) -> str:
     """Escape $ so Streamlit does not read dollar amounts as math."""
     return text.replace("$", "\\$")
