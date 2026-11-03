@@ -11,6 +11,7 @@ from pathlib import Path
 
 import streamlit as st
 
+import ai_docs
 import rules as R
 
 CSS = """<style>
@@ -227,6 +228,7 @@ ARTIFACTS = [
     ("Streamlit app", "Current schedule and what-if views, employee profile, rules editor, guide, reports."),
     ("Reports", "Excel and PDF built from the active filters."),
     ("Hosted app", "Deployed from GitHub so it can be opened from a link."),
+    ("Product documentation", "Six user flows, six technical diagrams and a user guide, in the Product docs tab."),
 ]
 
 
@@ -493,7 +495,7 @@ def render() -> None:
         '<div class="ai-stat"><b>8</b><span>companies in the sample data</span></div></div>', unsafe_allow_html=True)
     _prd_card()
 
-    t1, t2, t3, t4 = st.tabs(["The story", "My judgment calls", "Limits", "Artifacts and method"])
+    t1, tdoc, t2, t3, t4 = st.tabs(["The story", "Product docs", "My judgment calls", "Limits", "Artifacts and method"])
     with t1:
         for i, s in enumerate(STEPS, 1):
             st.markdown(_step_html(i, s), unsafe_allow_html=True)
@@ -501,6 +503,8 @@ def render() -> None:
                 label, opened, fn = OUTPUTS[i]
                 with st.expander(label, expanded=opened):
                     fn()
+    with tdoc:
+        ai_docs.render()
     with t2:
         st.markdown("The AI did a lot of the drafting and research. These are the calls that were mine.")
         for h, t in JUDGMENT:
