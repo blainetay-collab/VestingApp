@@ -49,14 +49,14 @@ def hx(t) -> str:
 # what I decided or contributed, and what came out of it.
 STEPS = [
     {"title": "Frame the problem and write the PRD",
-     "me": "I'm applying for a job helping build a new stock plan process. Today it is very manual. I want to build a "
-           "prototype start to finish to show I want the job. First a PRD. Start with a source of data: employees "
+     "me": "I want to learn how stock plan vesting works. Today the process is very manual. I want to build a "
+           "prototype start to finish to build my own knowledge and skills. First a PRD. Start with a source of data: employees "
            "across countries, their unvested stock, and when each segment vests. Then list upcoming vesting events "
            "with a predicted market value, and produce reports for clients.",
      "ai": ["Turned a loose idea into a structured PRD: problem, users, scope, data model, functional requirements, "
             "open questions.",
             "Split the work into stages (data, engine, reports) so each could be built and checked on its own."],
-     "dec": ["Chose the end-to-end goal and the audience for the demo (the interviewers).",
+     "dec": ["Chose the end-to-end goal: learn the domain by building something real, start to finish.",
              "Kept the scope to vesting events and reports, not tax filing or trading."],
      "out": "PRD document"},
     {"title": "Learn the domain: how brokerages and stock plans work",
@@ -106,7 +106,7 @@ STEPS = [
             "not adjust vesting for statutory or paid leave, and about 83% do not for unpaid non-statutory leave.",
             "Translated my L-4 / L-0 framing into a list of data that is stable ahead of time versus data that only "
             "settles on lapse day."],
-     "dec": ["The L-4 / L-0 framing came from my own understanding of the job, not from the AI.",
+     "dec": ["The L-4 / L-0 framing came from my own understanding of how lapse processing works, not from the AI.",
              "Decided leave of absence belongs in the what-if as a pause or continue choice."],
      "out": "Leave of absence what-if; pre-lapse readiness is a planned feature"},
     {"title": "Make the product usable: UI review",
@@ -142,7 +142,7 @@ STEPS = [
 
 JUDGMENT = [
     ("Scope",
-     "I set the goal (a prototype that shows I want the job), the audience and what to leave out. The AI proposed; I chose."),
+     "I set the goal (learn stock vesting by building a prototype end to end) and what to leave out. The AI proposed; I chose."),
     ("Assumptions over perfection",
      "Where the answer depends on the employer's internal facts, I chose to state an assumption and label it, instead of "
      "pretending to know."),
@@ -161,11 +161,11 @@ JUDGMENT = [
 
 LIMITS = [
     "All data is synthetic. No real employee, company or brokerage data was used.",
-    "Default plan rules are typical practice chosen so the demo behaves sensibly. They are not legal or tax advice, "
+    "Default plan rules are typical practice chosen so the prototype behaves sensibly. They are not legal or tax advice, "
     "and a real implementation would load each company's plan documents.",
     "Research was done through AI-assisted web research. Anything that would drive a real decision needs checking "
     "against primary sources, such as plan documents, counsel and the brokerage's own specifications.",
-    "I did not interview stakeholders or run user tests. The product decisions came from my own reading of the problem, "
+    "I did not hold stakeholder conversations or run user tests. The product decisions came from my own reading of the problem, "
     "AI research and iterating on the working app.",
     "Pre-lapse readiness (an L-4 snapshot per person with ready / needs review / blocked status) is researched and "
     "designed but not built yet.",
@@ -208,14 +208,14 @@ def render() -> None:
     st.markdown(
         '<div class="ai-hero"><h2>How I used AI for the product work</h2>'
         "<p>This page is separate from the vesting tool. It shows how I worked with AI on the product itself: "
-        "learning the domain, researching, writing the requirements, and deciding what to build. The app is one result.</p>"
+        "teaching myself stock vesting, researching, writing the requirements, and deciding what to build. I did this to build my own knowledge and skills; the app is one result.</p>"
         "<p>Each step shows what I asked, what the AI did, and what I decided.</p></div>", unsafe_allow_html=True)
     st.markdown(
         '<div class="ai-stats">'
         f'<div class="ai-stat"><b>{len(STEPS)}</b><span>stages of product work</span></div>'
         '<div class="ai-stat"><b>1</b><span>PRD with research and assumptions</span></div>'
         '<div class="ai-stat"><b>9</b><span>award types modeled</span></div>'
-        '<div class="ai-stat"><b>8</b><span>companies in the demo data</span></div></div>', unsafe_allow_html=True)
+        '<div class="ai-stat"><b>8</b><span>companies in the sample data</span></div></div>', unsafe_allow_html=True)
 
     t1, t2, t3, t4 = st.tabs(["The story", "My judgment calls", "Limits", "Artifacts and method"])
     with t1:
