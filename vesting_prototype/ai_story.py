@@ -7,8 +7,11 @@ keep it accurate; nothing here is computed.
 from __future__ import annotations
 
 import html as _html
+from pathlib import Path
 
 import streamlit as st
+
+import rules as R
 
 CSS = """<style>
 .ai-hero{border:1px solid rgba(128,128,128,.3);border-radius:1rem;padding:1.1rem 1.2rem;margin:.4rem 0 1rem 0;
@@ -38,6 +41,43 @@ CSS = """<style>
          padding:.1rem .55rem;margin:.1rem .25rem .1rem 0}
 .ai-note{border-left:4px solid #F59E0B;padding:.5rem .8rem;margin:.6rem 0;background:rgba(245,158,11,.08);
          border-radius:0 .6rem .6rem 0;font-size:.92rem}
+
+.ai-dl{border:1px solid rgba(37,99,235,.35);border-radius:1rem;padding:.8rem 1rem;margin:.2rem 0 1rem 0;background:rgba(37,99,235,.06)}
+.ai-dl b{font-size:1.02rem}
+.ai-dl p{margin:.25rem 0 0 0;font-size:.88rem;opacity:.8}
+.ai-tbl{width:100%;border-collapse:collapse;font-size:.86rem;margin:.2rem 0 .6rem 0}
+.ai-tbl th,.ai-tbl td{border:1px solid rgba(128,128,128,.3);padding:.35rem .5rem;text-align:left;vertical-align:top}
+.ai-tbl th{background:rgba(128,128,128,.12);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em}
+.ai-tblwrap{overflow-x:auto}
+.ai-cap{font-size:.8rem;opacity:.7;margin:.2rem 0 .5rem 0}
+.mm{display:grid;grid-template-columns:1fr auto 1fr;gap:0 .3rem;align-items:center;margin:.4rem 0}
+.mm-col{display:flex;flex-direction:column;gap:.7rem}
+.mm-h{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;font-weight:700;opacity:.8}
+.mm-col.l .mm-h{text-align:right}
+.mm-b{display:flex;align-items:center;gap:.45rem}
+.mm-b.l{justify-content:flex-end}
+.mm-b.r{justify-content:flex-start}
+.mm-bn{position:relative;font-weight:700;font-size:.86rem;border-radius:.7rem;padding:.45rem .6rem;max-width:8.5rem;text-align:center;line-height:1.2}
+.mm-leaves{display:flex;flex-direction:column;gap:.22rem}
+.mm-leaf{font-size:.78rem;border-radius:.5rem;padding:.2rem .5rem;line-height:1.25}
+.mm-col.l .mm-bn{background:rgba(16,185,129,.22);border:1px solid rgba(16,185,129,.7)}
+.mm-col.l .mm-leaf{background:rgba(16,185,129,.09);border:1px solid rgba(16,185,129,.35)}
+.mm-col.r .mm-bn{background:rgba(245,158,11,.22);border:1px solid rgba(245,158,11,.8)}
+.mm-col.r .mm-leaf{background:rgba(245,158,11,.10);border:1px dashed rgba(245,158,11,.7)}
+.mm-col.l .mm-bn::after{content:"";position:absolute;right:-.9rem;top:50%;width:.9rem;border-top:2px solid rgba(16,185,129,.7)}
+.mm-col.r .mm-bn::before{content:"";position:absolute;left:-.9rem;top:50%;width:.9rem;border-top:2px dashed rgba(245,158,11,.8)}
+.mm-col.l .mm-leaves{text-align:right}
+.mm-core{background:#2563EB;color:#fff;border-radius:1rem;padding:.9rem 1rem;font-weight:700;text-align:center;
+         width:8.5rem;margin:0 .9rem;line-height:1.25}
+.mm-core small{display:block;font-weight:400;opacity:.85;margin-top:.25rem;font-size:.72rem}
+@media (max-width:820px){
+ .mm{display:flex;flex-direction:column}.mm-core{order:-1;width:auto;margin:.4rem 0 .2rem 0}
+ .mm-col{margin-top:.9rem}.mm-col.l .mm-h{text-align:left}
+ .mm-b.l,.mm-b.r{flex-direction:column;align-items:stretch}
+ .mm-b.l{flex-direction:column-reverse}
+ .mm-bn{max-width:none;text-align:left}.mm-bn::before,.mm-bn::after{display:none}
+ .mm-col.l .mm-leaves{text-align:left}
+}
 </style>"""
 
 
@@ -203,24 +243,264 @@ def _step_html(i: int, s: dict) -> str:
         f'<div class="ai-out">Output: <span class="ai-pill">{hx(s["out"])}</span></div></div>')
 
 
+PRD_MD = Path(__file__).parent / "prd.md"
+
+
+def _table_html(headers: list[str], rows: list[list[str]]) -> str:
+    th = "".join(f"<th>{hx(h)}</th>" for h in headers)
+    body = "".join("<tr>" + "".join(f"<td>{hx(c)}</td>" for c in r) + "</tr>" for r in rows)
+    return f'<div class="ai-tblwrap"><table class="ai-tbl"><tr>{th}</tr>{body}</table></div>'
+
+
+# ---------------------------------------------------------------- PRD download
+@st.cache_data(show_spinner=False)
+def _prd_pdf(md_text: str) -> bytes:
+    """Render the PRD markdown (headings, bullets, numbered lists, tables, bold, links) to a simple PDF."""
+    import io
+    import re
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    ss = getSampleStyleSheet()
+    body = ParagraphStyle("b", parent=ss["BodyText"], fontSize=9.5, leading=13)
+    cell = ParagraphStyle("c", parent=body, fontSize=8, leading=10)
+    cellh = ParagraphStyle("ch", parent=cell, fontName="Helvetica-Bold")
+    h1 = ParagraphStyle("h1", parent=ss["Heading1"], fontSize=17, leading=21)
+    h2 = ParagraphStyle("h2", parent=ss["Heading2"], fontSize=13, leading=16, spaceBefore=10)
+
+    def inline(t: str) -> str:
+        t = t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\\*", "*")
+        t = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", t)
+        return re.sub(r"\[(.+?)\]\((.+?)\)", r'<a href="\2" color="#1d4ed8">\1</a>', t)
+
+    flow, lines, i = [], md_text.split("\n"), 0
+    width = letter[0] - 1.4 * inch
+    while i < len(lines):
+        ln = lines[i].rstrip()
+        if not ln:
+            i += 1
+        elif ln.startswith("# "):
+            flow.append(Paragraph(inline(ln[2:]), h1)); i += 1
+        elif ln.startswith("## "):
+            flow.append(Paragraph(inline(ln[3:]), h2)); i += 1
+        elif ln.startswith("|"):
+            rows = []
+            while i < len(lines) and lines[i].startswith("|"):
+                cells = [c.strip() for c in lines[i].strip().strip("|").split("|")]
+                if not all(set(c) <= set("-: ") for c in cells):
+                    rows.append(cells)
+                i += 1
+            n = len(rows[0])
+            lens = [max(8, min(60, max(len(r[j]) for r in rows if j < len(r)))) for j in range(n)]
+            ws = [width * x / sum(lens) for x in lens]
+            data = [[Paragraph(inline(c), cellh if r == 0 else cell) for c in row] + [""] * (n - len(row))
+                    for r, row in enumerate(rows)]
+            t = Table(data, colWidths=ws, repeatRows=1)
+            t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), .4, colors.grey),
+                                   ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e5e7eb")),
+                                   ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+            flow += [t, Spacer(1, 6)]
+        elif ln.startswith("- "):
+            flow.append(Paragraph(inline(ln[2:]), body, bulletText="•")); i += 1
+        elif re.match(r"\d+\. ", ln):
+            num, rest = ln.split(". ", 1)
+            flow.append(Paragraph(inline(rest), body, bulletText=f"{num}.")); i += 1
+        else:
+            flow.append(Paragraph(inline(ln), body)); i += 1
+    buf = io.BytesIO()
+    SimpleDocTemplate(buf, pagesize=letter, leftMargin=.7 * inch, rightMargin=.7 * inch, topMargin=.7 * inch,
+                      bottomMargin=.7 * inch, title="PRD: Global Equity Vesting Tracker").build(flow)
+    return buf.getvalue()
+
+
+def _prd_card() -> None:
+    if not PRD_MD.exists():
+        return
+    md_text = PRD_MD.read_text(encoding="utf-8")
+    st.markdown(
+        '<div class="ai-dl"><b>The PRD</b><p>The product requirements document I wrote with the AI: problem, goals, '
+        "data model, requirements, brokerage research (Section 13) and assumptions (Section 14). It is version 0.1, my "
+        "starting point, so it still says RSUs only; the app has since grown to nine award types and an editable rules "
+        "engine.</p></div>", unsafe_allow_html=True)
+    c1, c2, _ = st.columns([1, 1, 1.4])
+    try:
+        c1.download_button("Download PRD (PDF)", _prd_pdf(md_text), file_name="PRD_Equity_Vesting_Tracker.pdf",
+                           mime="application/pdf", key="prd_pdf", use_container_width=True)
+    except Exception:   # never let a PDF problem hide the markdown download
+        pass
+    c2.download_button("Download PRD (Markdown)", md_text, file_name="PRD_Equity_Vesting_Tracker.md",
+                       mime="text/markdown", key="prd_md", use_container_width=True)
+
+
+# ---------------------------------------------------------------- step outputs
+# Left = what step 2 researched (PRD Section 13). Right = what the PRD lists as still to research or confirm
+# (Sections 9 and 13).
+MIND_DONE = [
+    ("Who does what", ["Plan sponsor (the company)", "Platform / recordkeeper", "Broker", "Payroll, HR, Tax, Legal"]),
+    ("Platforms", ["Morgan Stanley at Work (Shareworks, E*TRADE)", "Carta", "Fidelity Stock Plan Services",
+                   "Others: Computershare, Schwab, Empower, Ledgy"]),
+    ("Reports and the gap", ["Reports download as Excel or CSV", "Vendors offer scheduled, ad-hoc reports",
+                             "Gap: cross-vendor reports with forecasts"]),
+    ("Takeaways for the design", ["Start with file imports", "Track country by vesting period",
+                                  "Flag, don't calculate, country tax rules"]),
+]
+MIND_TODO = [
+    ("This company's setup", ["Which platform and broker?", "Public or private stock?",
+                              "Who gets reports, and what hurts?"]),
+    ("Vendor facts to verify", ["Shareworks: does an API exist?", "Carta: current API status",
+                                "Fidelity: export formats, scheduling"]),
+    ("Global rules", ["Tax timing by country", "Foreign plan filings and approvals", "Data privacy (GDPR and local)"]),
+    ("Money and dates", ["FX rate source and timing", "Holiday and business-day rules", "Employees who move mid-vest"]),
+]
+
+
+def mindmap_html() -> str:
+    def col(cls, title, data):
+        side = "l" if cls == "l" else "r"
+        out = [f'<div class="mm-col {cls}"><div class="mm-h">{hx(title)}</div>']
+        for name, leaves in data:
+            lv = '<div class="mm-leaves">' + "".join(f'<div class="mm-leaf">{hx(x)}</div>' for x in leaves) + "</div>"
+            bn = f'<div class="mm-bn">{hx(name)}</div>'
+            out.append(f'<div class="mm-b {side}">{lv + bn if side == "l" else bn + lv}</div>')
+        return "".join(out) + "</div>"
+    return ('<div class="mm">' + col("l", "Researched", MIND_DONE)
+            + '<div class="mm-core">Stock plan vesting<small>research map</small></div>'
+            + col("r", "Still to research", MIND_TODO) + "</div>")
+
+
+def out_prd_outline() -> None:
+    st.markdown(_table_html(
+        ["Section", "What it holds"],
+        [["1-4", "Problem, goals and non-goals, personas, prototype scope"],
+         ["5", "Data requirements: employee, grant, tranche, market data"],
+         ["6-8", "Functional requirements F1-F12 with priority, valuation approach, report contents"],
+         ["9-11", "Global considerations, non-functional requirements, success metrics"],
+         ["12", "Build plan in seven phases"],
+         ["13-14", "Brokerage research and assumptions (added in the next two steps)"]]), unsafe_allow_html=True)
+
+
+def out_mindmap() -> None:
+    st.markdown(mindmap_html(), unsafe_allow_html=True)
+    st.markdown(
+        '<div class="ai-cap">Green: researched, written up in PRD Section 13. Amber (dashed): listed in the PRD as still '
+        "to research or confirm (Sections 9 and 13). The research came from AI-assisted web search of vendor, "
+        "review-site and job-posting pages in October 2026, so each vendor claim still needs checking with the "
+        "vendor.</div>", unsafe_allow_html=True)
+
+
+def out_assumptions() -> None:
+    st.markdown(_table_html(
+        ["Question", "Assumption I made", "What happened later"],
+        [["Which award types?", "RSUs only in phase 1; award type stays a field",
+          "Expanded to nine award types"],
+         ["Which brokerage, what export?", "A generic broker with an Excel/CSV export, one row per grant",
+          "Still an assumption; synthetic data mirrors that layout"],
+         ["Internal or external audience?", "External clients: summary by country and month, detail for admins",
+          "Reports built to that shape"],
+         ["Reporting currency?", "USD with a local-currency column; keep original currency, FX rate and date",
+          "Still an assumption"],
+         ["Forfeiture, termination, acceleration?", "Unvested forfeits on termination; vests on death or disability",
+          "Replaced by an editable rules engine, per company"],
+         ["Stack?", "Python, pandas and Streamlit; Excel and PDF export", "Built and hosted"]]),
+        unsafe_allow_html=True)
+    st.markdown('<div class="ai-cap">From PRD Section 14. The last column shows how each assumption held up.</div>',
+                unsafe_allow_html=True)
+
+
+def out_grant_example() -> None:
+    rows = [["Month 12 (cliff)", "1,200", "1,200"], ["Months 13 to 48 (36 monthly vests)", "100 each", "4,800"]]
+    st.markdown(_table_html(["When", "Shares vesting", "Total vested after"], rows), unsafe_allow_html=True)
+    st.markdown('<div class="ai-cap">Example of one grant (4,800 RSUs, 4 years, 1-year cliff, then monthly) becoming '
+                "37 tranches. This is why Grant and Tranche are separate tables in the data model.</div>",
+                unsafe_allow_html=True)
+
+
+def out_data_facts() -> None:
+    st.markdown(_table_html(
+        ["Table", "What is in it"],
+        [["Companies", "8 (the filter that lets one tool cover many clients)"],
+         ["Employees", "980 across the globe"],
+         ["Grants", "About 3,300, up to several per person"],
+         ["Tranches", "About 48,000 dated vesting events"],
+         ["Award types", "9, including cash-settled awards in India, Brazil, Poland and Japan"]]), unsafe_allow_html=True)
+    st.markdown('<div class="ai-cap">Seeded generator: every run produces the same synthetic data.</div>',
+                unsafe_allow_html=True)
+
+
+def out_lapse_readiness() -> None:
+    st.markdown(_table_html(
+        ["Known at L-4 (rarely changes day to day)", "Only settles at L-0 (lapse day)"],
+        [["Country of residence and tax residency", "Share price on the lapse date"],
+         ["Mobility and work-location history", "FX rate on the lapse date"],
+         ["Employment and leave status", "Final headcount: anyone who left in the last days"],
+         ["Award type, schedule and settlement (shares or cash)", "Performance payout, once certified"],
+         ["Plan rules that apply to the person", "Withholding amounts that depend on the price"]]),
+        unsafe_allow_html=True)
+    st.markdown('<div class="ai-cap">A working list to validate with someone who runs lapses today. The first two '
+                "items on the left are from my own framing; the rest is a draft. Not built into the app yet.</div>",
+                unsafe_allow_html=True)
+
+
+def out_rules_defaults() -> None:
+    cols = ["RSU", "Stock Option", "PSU", "ESPP"]
+    rows = [[R.EVENTS[ev]] + [R.DEFAULT_TREATMENTS[ev][a] for a in cols] for ev in
+            ("resign", "term_cause", "retire", "death", "disability", "leave")]
+    st.markdown(_table_html(["Event"] + cols, rows), unsafe_allow_html=True)
+    st.markdown('<div class="ai-cap">Default treatments in the app (a sample of 6 events and 4 award types). They are '
+                "typical practice I chose so the prototype behaves sensibly, and each can be overridden per company.</div>",
+                unsafe_allow_html=True)
+
+
+def out_ship_chips(items: list[str]) -> None:
+    st.markdown("".join(f'<span class="ai-pill">{hx(x)}</span>' for x in items), unsafe_allow_html=True)
+
+
+# index (1-based step number) -> (expander label, expanded by default, renderer)
+OUTPUTS = {
+    1: ("Output: what the PRD contains", False, out_prd_outline),
+    2: ("Output: research mind map", True, out_mindmap),
+    3: ("Output: assumptions and how they held up", False, out_assumptions),
+    4: ("Output: one grant becomes tranches", False, out_grant_example),
+    5: ("Output: the synthetic dataset", False, out_data_facts),
+    6: ("Output: what shipped", False, lambda: out_ship_chips(
+        ["Current schedule view", "What-if view", "Company, country, department filters", "Export of filtered data",
+         "Vesting by month chart", "Hosted on GitHub + Streamlit"])),
+    7: ("Output: L-4 readiness, working draft", False, out_lapse_readiness),
+    8: ("Output: what changed", False, lambda: out_ship_chips(
+        ["Two clear views", "Cards on phones", "Filters popover", "Summary band", "Header fix on desktop"])),
+    10: ("Output: default rules in the app", False, out_rules_defaults),
+}
+
+
 def render() -> None:
     st.markdown(CSS, unsafe_allow_html=True)
     st.markdown(
         '<div class="ai-hero"><h2>How I used AI for the product work</h2>'
         "<p>This page is separate from the vesting tool. It shows how I worked with AI on the product itself: "
-        "teaching myself stock vesting, researching, writing the requirements, and deciding what to build. I did this to build my own knowledge and skills; the app is one result.</p>"
-        "<p>Each step shows what I asked, what the AI did, and what I decided.</p></div>", unsafe_allow_html=True)
+        "teaching myself stock vesting, researching, writing the requirements, and deciding what to build. I did this "
+        "to build my own knowledge and skills; the app is one result.</p>"
+        "<p>Each step shows what I asked, what the AI did, and what I decided, with the output where there is one.</p>"
+        "</div>", unsafe_allow_html=True)
     st.markdown(
         '<div class="ai-stats">'
         f'<div class="ai-stat"><b>{len(STEPS)}</b><span>stages of product work</span></div>'
         '<div class="ai-stat"><b>1</b><span>PRD with research and assumptions</span></div>'
         '<div class="ai-stat"><b>9</b><span>award types modeled</span></div>'
         '<div class="ai-stat"><b>8</b><span>companies in the sample data</span></div></div>', unsafe_allow_html=True)
+    _prd_card()
 
     t1, t2, t3, t4 = st.tabs(["The story", "My judgment calls", "Limits", "Artifacts and method"])
     with t1:
         for i, s in enumerate(STEPS, 1):
             st.markdown(_step_html(i, s), unsafe_allow_html=True)
+            if i in OUTPUTS:
+                label, opened, fn = OUTPUTS[i]
+                with st.expander(label, expanded=opened):
+                    fn()
     with t2:
         st.markdown("The AI did a lot of the drafting and research. These are the calls that were mine.")
         for h, t in JUDGMENT:
