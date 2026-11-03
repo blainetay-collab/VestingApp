@@ -12,6 +12,7 @@ from pathlib import Path
 import streamlit as st
 
 import ai_docs
+import ai_map
 import rules as R
 
 CSS = """<style>
@@ -478,6 +479,34 @@ OUTPUTS = {
 }
 
 
+def _captured_outputs() -> dict:
+    """Run the output functions with st.markdown redirected, to reuse their HTML inside the interactive map."""
+    out = {}
+    orig = st.markdown
+    for n, (_label, _open, fn) in OUTPUTS.items():
+        if n == 2:      # the research mind map is drawn natively by the interactive map
+            continue
+        buf = []
+        st.markdown = lambda body, *a, **k: buf.append(body)
+        try:
+            fn()
+        finally:
+            st.markdown = orig
+        out[n] = "".join(buf)
+    return out
+
+
+def _interactive_map() -> bool:
+    """Show the interactive map; returns False when the components API is unavailable."""
+    try:
+        from streamlit.components.v1 import html as comp_html
+    except Exception:
+        return False
+    comp_html(ai_map.page(STEPS, JUDGMENT, LIMITS, MIND_DONE, MIND_TODO, _captured_outputs()),
+              height=ai_map.HEIGHT, scrolling=True)
+    return True
+
+
 def render() -> None:
     st.markdown(CSS, unsafe_allow_html=True)
     st.markdown(
@@ -495,7 +524,11 @@ def render() -> None:
         '<div class="ai-stat"><b>8</b><span>companies in the sample data</span></div></div>', unsafe_allow_html=True)
     _prd_card()
 
-    t1, tdoc, t2, t3, t4 = st.tabs(["The story", "Product docs", "My judgment calls", "Limits", "Artifacts and method"])
+    tmap, t1, tdoc, t2, t3, t4 = st.tabs(["Mind map", "The story", "Product docs", "My judgment calls", "Limits",
+                                            "Artifacts and method"])
+    with tmap:
+        if not _interactive_map():
+            st.info("The interactive map is not available in this environment. See The story tab.")
     with t1:
         for i, s in enumerate(STEPS, 1):
             st.markdown(_step_html(i, s), unsafe_allow_html=True)
