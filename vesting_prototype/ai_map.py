@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 
-HEIGHT = 860
+HEIGHT = 760
 
 SHORT = ["Frame and write the PRD", "Learn the domain", "Close open questions", "AI as a tutor", "Synthetic data",
          "Build, test, host", "Pre-lapse and leave", "UI review", "Employee drill-down", "Real equity programs"]
@@ -113,7 +113,11 @@ details.rb ul{margin:0;padding:2px 10px 8px 26px;font-size:12.5px}
 .root.m .lb,.root.m .br.L .lb,.root.m .br.R .lb,.root.m .br.B .lb{position:static;width:auto;flex:1;text-align:left;top:auto}
 .root.m .br.B .lab b{font-size:19px}.root.m .br.B .pill{font-size:12.5px}
 .root.m .br.open .kids{max-height:400px}
-.root.m .ban h1{font-size:22px}.root.m .ban p{display:none}.root.m .rm{grid-template-columns:1fr}
+.root.m .hub{width:118px;height:118px;padding:10px;box-shadow:0 0 0 8px var(--g),0 6px 18px rgba(11,74,60,.3)}.root.m .hub b{font-size:14px}
+.root.m .hubw{padding:4px 0 12px}.root.m .nodes{gap:10px}.root.m .ico{width:52px;height:52px;font-size:23px}
+.root.m .lab b{font-size:16px}.root.m .lab span{font-size:11.5px}
+.root.m.t .nodes{display:grid;grid-template-columns:1fr 1fr;gap:10px 18px;align-items:start}
+.root.m .ban{padding:10px 16px}.root.m .ban h1{font-size:22px}.root.m .ban p{display:none}.root.m .rm{grid-template-columns:1fr}
 .root.m .dr{width:100%;top:8%;border-radius:18px 18px 0 0;transform:translateY(105%)}.root.m.dopen .dr{transform:none}
 </style></head><body>
 <div class="root" id="root">
@@ -140,7 +144,7 @@ const key=k=>k.t+(k.n||'');
 const seen=new Set(), open=new Set();
 let cur=-1;
 
-function label(k){return k.t==='step'?(k.n+'. '+D.short[k.n-1]):k.t==='judg'?'Seven calls that were mine':'What this is not'}
+function label(k){return k.t==='step'?(k.n+'. '+D.short[k.n-1]):k.t==='judg'?'My seven calls':'What this is not'}
 const SIDE=['L','L','B','B','B','B','R','R'],PHI=[170,147,124,101,79,56,33,10];
 function build(){
   const nodes=$('nodes');nodes.innerHTML='';
@@ -164,7 +168,7 @@ function layout(anim){
     const el=$('b_'+b.id);if(!el)return;
     if(m){el.style.left='';el.style.top='';el.querySelector('.lb').style.width='';return}
     const W=1100,H=st.clientHeight/SC,cx=W/2,cy=128;
-    const Rx=Math.min(W*0.33,380),Ry=Math.max(200,H-cy-215),a=PHI[i]*Math.PI/180;
+    const Rx=Math.min(W*0.33,380),Ry=Math.max(200,H-cy-170),a=PHI[i]*Math.PI/180;
     const x=cx+Rx*Math.cos(a),y=cy+Ry*Math.sin(a);
     el.style.left=x+'px';el.style.top=y+'px';
     if(SIDE[i]!=='B'){const av=(SIDE[i]==='L'?x:W-x)-52-8;el.querySelector('.lb').style.width=Math.max(110,Math.min(190,av))+'px'}
@@ -226,8 +230,8 @@ $('exp').onclick=()=>{D.branches.forEach(b=>toggle(b.id,true))};
 $('col').onclick=()=>{D.branches.forEach(b=>toggle(b.id,false))};
 document.addEventListener('keydown',e=>{if(!root.classList.contains('dopen'))return;
   if(e.key==='Escape')closeD();if(e.key==='ArrowRight')openItem(cur+1);if(e.key==='ArrowLeft')openItem(cur-1)});
-const mq=matchMedia('(max-width:760px)');
-function mode(){root.classList.toggle('m',mq.matches);setTimeout(()=>layout(true),60)}
+const mq=matchMedia('(max-width:899px)');
+function mode(){root.classList.toggle('m',mq.matches);root.classList.toggle('t',mq.matches&&window.innerWidth>=560);setTimeout(()=>layout(true),60)}
 mq.addEventListener?mq.addEventListener('change',mode):mq.addListener(mode);window.addEventListener('resize',()=>setTimeout(()=>layout(false),50));
 build();mode();
 </script></body></html>"""
