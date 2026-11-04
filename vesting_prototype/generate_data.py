@@ -13,32 +13,32 @@ import pandas as pd
 from dateutil.relativedelta import relativedelta
 
 SEED = 42
-AS_OF = date(2026, 10, 23)
+AS_OF = date(2026, 11, 4)
 OUT = Path(os.environ.get("VESTING_DATA_DIR") or Path(__file__).parent / "data")
 OUT.mkdir(exist_ok=True)
 random.seed(SEED)
 
 # company_id, name, ticker, industry, hq_code, employees, price_usd, volatility, growth
 COMPANIES = [
-    ("C001", "Acme Global Inc.", "ACME", "Technology", "US", 180, 84.50, 0.35, 0.08),
-    ("C002", "Northwind Robotics", "NWRB", "Industrial Tech", "DE", 150, 41.20, 0.42, 0.10),
-    ("C003", "Helios Energy", "HLOS", "Energy", "GB", 140, 22.80, 0.38, 0.05),
-    ("C004", "Bluepeak Software", "BPKS", "Software", "US", 130, 156.30, 0.45, 0.12),
-    ("C005", "Meridian Health", "MRDH", "Healthcare", "CA", 110, 63.40, 0.28, 0.07),
-    ("C006", "Orbit Logistics", "ORBT", "Logistics", "SG", 100, 18.90, 0.33, 0.06),
-    ("C007", "Cobalt Financial", "CBFT", "Financial Services", "IE", 90, 112.70, 0.25, 0.06),
-    ("C008", "Verdant Foods", "VRDF", "Consumer", "AU", 80, 37.50, 0.22, 0.04),
+    ("C001", "Acme Global Inc.", "ACME", "Technology", "US", 180, 86.15, 0.35, 0.08),
+    ("C002", "Northwind Robotics", "NWRB", "Industrial Tech", "DE", 150, 39.85, 0.42, 0.10),
+    ("C003", "Helios Energy", "HLOS", "Energy", "GB", 140, 23.40, 0.38, 0.05),
+    ("C004", "Bluepeak Software", "BPKS", "Software", "US", 130, 162.10, 0.45, 0.12),
+    ("C005", "Meridian Health", "MRDH", "Healthcare", "CA", 110, 64.75, 0.28, 0.07),
+    ("C006", "Orbit Logistics", "ORBT", "Logistics", "SG", 100, 18.35, 0.33, 0.06),
+    ("C007", "Cobalt Financial", "CBFT", "Financial Services", "IE", 90, 114.20, 0.25, 0.06),
+    ("C008", "Verdant Foods", "VRDF", "Consumer", "AU", 80, 37.90, 0.22, 0.04),
 ]
 
 # country, code, currency, FX (units per 1 USD, illustrative), base weight
 COUNTRIES = [
-    ("United States", "US", "USD", 1.00, 14), ("United Kingdom", "GB", "GBP", 0.79, 7),
-    ("Germany", "DE", "EUR", 0.92, 6), ("France", "FR", "EUR", 0.92, 4),
-    ("Ireland", "IE", "EUR", 0.92, 3), ("Netherlands", "NL", "EUR", 0.92, 3),
-    ("Canada", "CA", "CAD", 1.37, 5), ("India", "IN", "INR", 83.20, 6),
-    ("Singapore", "SG", "SGD", 1.34, 3), ("Australia", "AU", "AUD", 1.52, 3),
-    ("Japan", "JP", "JPY", 150.00, 3), ("Brazil", "BR", "BRL", 5.00, 3),
-    ("Israel", "IL", "ILS", 3.70, 3), ("Poland", "PL", "PLN", 4.00, 2),
+    ("United States", "US", "USD", 1.00, 14), ("United Kingdom", "GB", "GBP", 0.78, 7),
+    ("Germany", "DE", "EUR", 0.91, 6), ("France", "FR", "EUR", 0.91, 4),
+    ("Ireland", "IE", "EUR", 0.91, 3), ("Netherlands", "NL", "EUR", 0.91, 3),
+    ("Canada", "CA", "CAD", 1.39, 5), ("India", "IN", "INR", 84.10, 6),
+    ("Singapore", "SG", "SGD", 1.33, 3), ("Australia", "AU", "AUD", 1.53, 3),
+    ("Japan", "JP", "JPY", 152.40, 3), ("Brazil", "BR", "BRL", 5.12, 3),
+    ("Israel", "IL", "ILS", 3.64, 3), ("Poland", "PL", "PLN", 4.05, 2),
 ]
 NAMES = {
     "US": (["James", "Maria", "Chris", "Aisha", "Daniel", "Emily", "Marcus", "Hannah"], ["Carter", "Nguyen", "Brooks", "Hughes", "Patel", "Reed", "Foster", "Gray"]),

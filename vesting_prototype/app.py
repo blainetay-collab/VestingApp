@@ -33,12 +33,17 @@ def find_data_dir() -> str:
     import os
     import runpy
     import tempfile
+    import re
     here = Path(__file__).parent
+    # the as-of date the generator is set to; a data folder is only reused if it was built for that date
+    m = re.search(r"AS_OF = date\((\d+), (\d+), (\d+)\)", (here / "generate_data.py").read_text())
+    stamp = f"{int(m[1]):04d}-{int(m[2]):02d}-{int(m[3]):02d}" if m else ""
     for d in (here / "data", here):
-        # a data folder from before the award-type update lacks the 'settlement' column; skip it and regenerate
-        if (d / "companies.csv").exists() and "settlement" in (d / "grants.csv").read_text().split("\n", 1)[0]:
+        # skip a data folder that predates the award-type update (no 'settlement' column) or an older as-of date
+        if ((d / "companies.csv").exists() and "settlement" in (d / "grants.csv").read_text().split("\n", 1)[0]
+                and stamp in (d / "market_data.csv").read_text()):
             return str(d)
-    gen = Path(tempfile.gettempdir()) / "vesting_demo_data_v2"
+    gen = Path(tempfile.gettempdir()) / f"vesting_demo_data_{stamp or 'v3'}"
     if not (gen / "companies.csv").exists():
         with st.spinner("Generating the demo data (first load only, a few seconds)..."):
             os.environ["VESTING_DATA_DIR"] = str(gen)
