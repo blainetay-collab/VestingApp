@@ -17,7 +17,7 @@ SHORT = ["Frame and write the PRD", "Learn the domain", "Close open questions", 
 BRANCHES = [
     ("frame", "Frame the problem", "Goal, scope, PRD", "\U0001F9ED", "L", [("step", 1)]),
     ("learn", "Learn the domain", "Research and assumptions", "\U0001F4DA", "L", [("step", 2), ("step", 3), ("step", 4)]),
-    ("data", "Build the data", "Synthetic, global", "\U0001F5C2", "L", [("step", 5)]),
+    ("data", "Build the data", "Synthetic, global", "\U0001F4CA", "L", [("step", 5)]),
     ("build", "Build and host", "Prototype to a link", "\U0001F6E0", "L", [("step", 6)]),
     ("ops", "Real operations", "Leave, pre-lapse", "\U0001F50E", "R", [("step", 7)]),
     ("ux", "Make it usable", "Phone and desktop", "\U0001F3A8", "R", [("step", 8), ("step", 9)]),
@@ -40,7 +40,8 @@ html,body{margin:0;height:100%;font-family:"Segoe UI",system-ui,-apple-system,Ro
 .btn:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.25)}
 .btn.alt{background:rgba(255,255,255,.35);color:var(--gd)}
 .chip{font-size:12px;font-weight:700;background:rgba(255,255,255,.45);border-radius:999px;padding:6px 11px}
-.stage{position:relative;flex:1;min-height:0}
+.stage{position:relative;flex:1;min-height:0;overflow:hidden}
+.sc{position:absolute;left:0;top:0;width:1100px;transform-origin:0 0}
 .nodes{position:absolute;inset:0;z-index:2}
 .hubw{position:absolute;left:50%;top:30px;transform:translateX(-50%);z-index:3}
 .hub{position:relative;width:196px;height:196px;border-radius:50%;background:var(--gd);color:#fff;display:flex;flex-direction:column;
@@ -102,6 +103,7 @@ details.rb ul{margin:0;padding:2px 10px 8px 26px;font-size:12.5px}
 .df{display:flex;justify-content:space-between;gap:8px;padding:10px 14px;border-top:1px solid #e1e8e5;background:#f6faf8}
 .df .btn{background:var(--gd)}.df .btn[disabled]{opacity:.35;cursor:default}.df span{align-self:center;font-size:12px;opacity:.7}
 .root.m .stage{display:flex;flex-direction:column;overflow:auto;padding:10px 12px 18px}
+.root.m .sc{position:static;width:auto;height:auto!important;transform:none!important;display:flex;flex-direction:column}
 .root.m .hubw{position:static;transform:none;display:flex;justify-content:center;padding:6px 0 16px}
 .root.m .hub{width:150px;height:150px;padding:14px}.root.m .hub b{font-size:16px}.root.m .hub small{display:none}
 .root.m .nodes{position:static;display:flex;flex-direction:column;gap:12px}
@@ -118,9 +120,9 @@ details.rb ul{margin:0;padding:2px 10px 8px 26px;font-size:12.5px}
  <div class="ban"><div><h1>How I used AI</h1><p>A map of the product work: tap a branch to expand it, tap a step for the detail, or take the tour.</p></div>
   <div class="tools"><span class="chip" id="prog"></span><button class="btn" id="tour">&#9654; Tour</button>
   <button class="btn alt" id="exp">Expand all</button><button class="btn alt" id="col">Collapse all</button></div></div>
- <div class="stage" id="stage"><svg class="ln" id="ln"></svg>
+ <div class="stage" id="stage"><div class="sc" id="sc"><svg class="ln" id="ln"></svg>
   <div class="hubw"><div class="hub"><b>Product work with AI</b><small>Learn, research, decide, build</small></div></div>
-  <div class="nodes" id="nodes"></div></div>
+  <div class="nodes" id="nodes"></div></div></div>
  <div class="scrim" id="scrim"></div>
  <div class="dr" id="dr"><div class="dh"><div class="dn" id="dn"></div><h2 id="dt"></h2><button class="x" id="dx" aria-label="Close">&times;</button></div>
   <div class="db" id="db"></div>
@@ -154,12 +156,14 @@ function build(){
   });
   prog();layout(true);
 }
+let SC=1;
 function layout(anim){
-  const m=root.classList.contains('m'),st=$('stage');
+  const m=root.classList.contains('m'),st=$('stage'),sc=$('sc');
+  if(!m){SC=Math.min(1,st.clientWidth/1100);sc.style.transform='scale('+SC+')';sc.style.height=(st.clientHeight/SC)+'px'}
   D.branches.forEach((b,i)=>{
     const el=$('b_'+b.id);if(!el)return;
     if(m){el.style.left='';el.style.top='';el.querySelector('.lb').style.width='';return}
-    const W=st.clientWidth,H=st.clientHeight,cx=W/2,cy=128;
+    const W=1100,H=st.clientHeight/SC,cx=W/2,cy=128;
     const Rx=Math.min(W*0.33,380),Ry=Math.max(200,H-cy-215),a=PHI[i]*Math.PI/180;
     const x=cx+Rx*Math.cos(a),y=cy+Ry*Math.sin(a);
     el.style.left=x+'px';el.style.top=y+'px';
@@ -174,11 +178,11 @@ function toggle(id,force){
 function prog(){$('prog').textContent='Explored '+seen.size+' of '+ALL.length}
 function lines(anim){
   const svg=$('ln');if(root.classList.contains('m')){svg.innerHTML='';return}
-  const s=$('stage').getBoundingClientRect(),h=document.querySelector('.hub').getBoundingClientRect();
-  const hx=h.left+h.width/2-s.left,hy=h.top+h.height/2-s.top;let out='';
+  const s=$('sc').getBoundingClientRect(),h=document.querySelector('.hub').getBoundingClientRect();
+  const hx=(h.left+h.width/2-s.left)/SC,hy=(h.top+h.height/2-s.top)/SC;let out='';
   D.branches.forEach(b=>{
     const ic=document.querySelector('#b_'+b.id+' .ico').getBoundingClientRect();
-    const x=ic.left+ic.width/2-s.left,y=ic.top+ic.height/2-s.top,dx=hx-x,dy=hy-y,d=Math.hypot(dx,dy)||1;
+    const x=(ic.left+ic.width/2-s.left)/SC,y=(ic.top+ic.height/2-s.top)/SC,dx=hx-x,dy=hy-y,d=Math.hypot(dx,dy)||1;
     const px=x+dx/d*52,py=y+dy/d*52;
     out+='<line id="l_'+b.id+'" class="'+(open.has(b.id)?'on':'')+'" x1="'+hx+'" y1="'+hy+'" x2="'+px+'" y2="'+py+'"/><circle cx="'+px+'" cy="'+py+'" r="6"/>';
   });
@@ -222,7 +226,7 @@ $('exp').onclick=()=>{D.branches.forEach(b=>toggle(b.id,true))};
 $('col').onclick=()=>{D.branches.forEach(b=>toggle(b.id,false))};
 document.addEventListener('keydown',e=>{if(!root.classList.contains('dopen'))return;
   if(e.key==='Escape')closeD();if(e.key==='ArrowRight')openItem(cur+1);if(e.key==='ArrowLeft')openItem(cur-1)});
-const mq=matchMedia('(max-width:1040px)');
+const mq=matchMedia('(max-width:760px)');
 function mode(){root.classList.toggle('m',mq.matches);setTimeout(()=>layout(true),60)}
 mq.addEventListener?mq.addEventListener('change',mode):mq.addListener(mode);window.addEventListener('resize',()=>setTimeout(()=>layout(false),50));
 build();mode();
