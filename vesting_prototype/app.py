@@ -102,6 +102,15 @@ st.markdown(
     .explain{border-left:4px solid #2563EB;background:var(--secondary-background-color);border-radius:.5rem;
              padding:.6rem .85rem;margin:.4rem 0 .8rem 0;font-size:.92rem}
     .explain b{font-weight:650}
+    .tabnote{font-size:.88rem;opacity:.8;margin:.1rem 0 .7rem 0}
+    .scen{border:1px solid rgba(37,99,235,.45);background:rgba(37,99,235,.08);border-radius:.6rem;
+          padding:.55rem .85rem;margin:.2rem 0 .7rem 0;font-size:.92rem}
+    .scen .sk{font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;opacity:.65}
+    .steps{display:flex;gap:.4rem;flex-wrap:wrap;margin:.1rem 0 .5rem 0}
+    .steps span{font-size:.8rem;background:var(--secondary-background-color);border-radius:.4rem;padding:.15rem .55rem}
+    .ck{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:.5rem;margin:.3rem 0 .8rem 0}
+    .ck>div{background:var(--secondary-background-color);border-radius:.6rem;padding:.55rem .75rem;font-size:.88rem}
+    .ck b{display:block;font-size:1.05rem}
     .kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:.5rem .9rem;margin:.3rem 0 .8rem 0}
     .kv-i{border-bottom:1px solid rgba(128,128,128,.25);padding:.25rem 0}
     .kv-k{font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;opacity:.6}
@@ -213,7 +222,8 @@ def cards_html(df: pd.DataFrame, share_decimals: int = 0, single: bool = False) 
     out = ['<div class="vgrid one">' if single else '<div class="vgrid">']
     for r in df.itertuples():
         when = f"{r.vest_date:%b %d, %Y}"
-        days = "today" if r.days_until <= 0 else f"in {r.days_until} day{'s' if r.days_until != 1 else ''}"
+        days = ('<b title="Lapse day: the vest date">L-0 &middot; today</b>' if r.days_until <= 0 else
+                f'<b title="{r.days_until} days before the lapse (vest) day">L-{r.days_until}</b>')
         flag = f'<div class="vc-flag">{hx(r.flags)}</div>' if r.flags else ""
         out.append(
             f'<div class="vc"><div class="vc-top"><span>{when}</span><span>{days}</span></div>'
@@ -481,8 +491,13 @@ def set_all_payout(pct):
 scenario, g_arg, v_arg, shock, attr = "Flat", None, None, 0.0, 0.0
 if is_whatif:
     with (st.expander("What-if settings", expanded=False) if ss.get("emp_view") else st.container(border=True)):
-        st.markdown("**Build your what-if**  \nNothing is saved. Changes are compared with the current schedule. "
-                    "Each tab explains what its settings do.")
+        st.markdown("**Build your what-if**  \nAsk \"what happens to the lapse if...?\" Nothing is saved, and every "
+                    "change is compared with the current schedule.")
+        st.markdown('<div class="steps"><span><b>1</b> Start with a quick scenario</span>'
+                    '<span><b>2</b> Fine-tune it below</span>'
+                    '<span><b>3</b> Read the impact on the <b>Lapse day</b> tab</span></div>',
+                    unsafe_allow_html=True)
+        st.caption("Quick scenarios")
         try:
             pbox = st.container(key="presets")
         except TypeError:  # older Streamlit without container keys
@@ -498,9 +513,11 @@ if is_whatif:
             p5.button("PSUs pay 150%", on_click=preset, kwargs={"pay": 150}, use_container_width=True)
             p6.button("Reset", on_click=reset_whatif, use_container_width=True)
 
-        t_price, t_pay, t_people = st.tabs(["Prices", "Performance payout", "People and events"])
+        st.caption("Fine-tune: each tab changes one kind of input.")
+        t_price, t_pay, t_people = st.tabs(["Share price", "Performance payout", "People and events"])
         with t_price:
-            explain_box("<b>Prices.</b> Every value is shares &times; a projected share price. "
+            explain_box("<b>Share price.</b> Changes the dollar value of every vest, not who vests or when. "
+                        "Every value is shares &times; a projected share price. "
                         "<b>Flat</b> holds today's price. <b>Growth</b> compounds it each year. <b>Range</b> adds a "
                         "bear and a bull case from each company's volatility. The slider below first moves "
                         "today's price up or down.")
@@ -515,7 +532,7 @@ if is_whatif:
                 g_arg, v_arg = (None, None) if own else (growth, vol)
 
         with t_pay:
-            explain_box("<b>Performance payout.</b> PSUs and performance cash pay a percentage of their target, "
+            explain_box("<b>Performance payout.</b> Changes how much performance awards pay on the lapse day. PSUs and performance cash pay a percentage of their target, "
                         "decided by results. 100% means target. Set it per company: for example a company that "
                         "is missing its goals might pay 50%, one that beats them 150%. Each grant also has its own "
                         "maximum, so entries above it are capped. Other award types are not affected.")
@@ -539,7 +556,8 @@ if is_whatif:
                        "companies. Pro-rata or accelerated payouts after a people event follow the rules instead.")
 
         with t_people:
-            explain_box("<b>People and events.</b> <b>Attrition</b> assumes a share of staff leave each year and "
+            explain_box("<b>People and events.</b> Changes who vests and when: leavers forfeit, leave pauses, "
+                        "and so on. <b>Attrition</b> assumes a share of staff leave each year and "
                         "forfeit what is unvested. <b>Events</b> are specific things that happen to specific people. "
                         "What each event does to each award type comes from the plan rules, which you can view and "
                         "change per company on the <i>Rules and guide</i> tab.")
@@ -603,6 +621,11 @@ if is_whatif:
                 if r2.button("Clear events"):
                     ss["actions"] = []
                     st.rerun()
+
+        n_active = (scenario != "Flat") + bool(shock) + bool(attr) + bool(ss["payout"]) + len(ss["actions"])
+        st.caption(f"{n_active} change{'s' if n_active != 1 else ''} active. Results update as you go; "
+                   "see the summary below the settings." if n_active else
+                   "No changes yet. Pick a quick scenario or move a setting.")
 
 actions_key = tuple((a["kind"], tuple(a["employee_ids"]), a["date"], a["months"]) for a in ss["actions"])
 rules_json = json.dumps(ss["rules"], sort_keys=True)
@@ -865,7 +888,16 @@ if is_whatif:
     if neutral:
         st.info("No changes yet. Pick a preset above, move a slider, or add a people event to see the impact.")
     else:
-        st.caption(md(f"What-if: {levers}."))
+        _nx = wi_ev["vest_date"].min() if not wi_ev.empty else None
+        _nx_txt = ""
+        if _nx is not None:
+            _c = cur_ev[cur_ev["vest_date"] == _nx]["est_value_usd"].sum()
+            _w = wi_ev[wi_ev["vest_date"] == _nx]["est_value_usd"].sum()
+            _nx_txt = (f"<br><span class='sk'>Next lapse day</span> {_nx:%b %d} "
+                       f"(L-{max((_nx - as_of_ts).days, 0)}): {charts.short_money(_c)} now, "
+                       f"{charts.short_money(_w)} in your what-if ({delta_text(_w, _c, True)})")
+        st.markdown(f'<div class="scen"><span class="sk">Your what-if</span><br>{hx(levers)}.{_nx_txt}</div>'
+                    .replace("$", "&#36;"), unsafe_allow_html=True)
 
 total_val = ev["est_value_usd"].sum()
 n_people, n_cos = ev["employee_id"].nunique(), ev["company"].nunique()
@@ -931,11 +963,108 @@ meta = {
                   "performance cash dollars x payout %. Units for performance cash are US dollars.",
 }
 
-tab_over, tab_events, tab_people, tab_rules, tab_report = st.tabs(
-    ["Overview", "Events", "People", "Rules and guide", "Reports and data"])
+tab_lapse, tab_over, tab_events, tab_people, tab_rules, tab_report = st.tabs(
+    ["Lapse day", "Overview", "Events", "People", "Rules and guide", "Reports and data"])
+
+
+def tab_note(text: str):
+    st.markdown(f'<div class="tabnote">{text}</div>', unsafe_allow_html=True)
+
+
+# ------------------------------------------------------------------ lapse day
+with tab_lapse:
+    tab_note("<b>One lapse day at a time.</b> Pick a vest date to see who vests, how much, how it is paid, and what "
+             "has to be ready by <b>L-4</b>. "
+             + ("With a what-if on, every number shows the current schedule next to your scenario." if is_whatif
+                else "Switch to What-if at the top to see how a scenario changes the day."))
+    d_cur = cur_ev["vest_date"].dt.normalize()
+    d_wi = wi_ev["vest_date"].dt.normalize() if is_whatif else d_cur.iloc[0:0]
+    all_days = sorted(set(d_cur.unique()) | set(d_wi.unique()))
+    if not all_days:
+        st.info("No lapse days in this window with these filters. Try a longer window or clear the filters.")
+    else:
+        day_n = pd.concat([d_cur, d_wi]).value_counts() if is_whatif else d_cur.value_counts()
+
+        def _day_label(d):
+            d = pd.Timestamp(d)
+            return f"{d:%a %b %d, %Y}  -  L-{max((d - as_of_ts).days, 0)}  -  {int(day_n.get(d, 0))} events"
+
+        pick_day = pd.Timestamp(st.selectbox("Lapse date", all_days, format_func=_day_label, key="l_date"))
+        cur_d = cur_ev[d_cur == pick_day]
+        wi_d = wi_ev[d_wi == pick_day] if is_whatif else None
+        shown = wi_d if is_whatif else cur_d
+        cmp_d = is_whatif and not neutral
+        days_to = max((pick_day - as_of_ts).days, 0)
+        pre = pick_day - pd.Timedelta(days=4)
+        pre_txt = ("L-4 was " if pre < as_of_ts else "L-4 is ") + f"{pre:%b %d}"
+        st.markdown(f"### {pick_day:%A, %B %d, %Y}")
+        st.caption(f"L-{days_to} (lapse day). Pre-lapse checks: {pre_txt}.")
+
+        def _sv(df, how):
+            return float(df.loc[df["settlement"] == how, "est_value_usd"].sum())
+
+        st.markdown(kpi_html([
+            ("Value vesting", charts.short_money(shown["est_value_usd"].sum()),
+             delta_text(shown["est_value_usd"].sum(), cur_d["est_value_usd"].sum(), True) if cmp_d else None,
+             "gross, before tax"),
+            ("People", f"{shown['employee_id'].nunique():,}",
+             delta_text(shown["employee_id"].nunique(), cur_d["employee_id"].nunique()) if cmp_d else None, None),
+            ("Events", f"{len(shown):,}", delta_text(len(shown), len(cur_d)) if cmp_d else None, None),
+            ("Paid in shares", charts.short_money(_sv(shown, "Shares")),
+             delta_text(_sv(shown, "Shares"), _sv(cur_d, "Shares"), True) if cmp_d else None, "delivered to brokerage"),
+            ("Paid in cash", charts.short_money(_sv(shown, "Cash")),
+             delta_text(_sv(shown, "Cash"), _sv(cur_d, "Cash"), True) if cmp_d else None, "payroll funds this"),
+        ]), unsafe_allow_html=True)
+
+        st.markdown("**Ready by L-4**")
+        tab_note("What the team confirms before the lapse. Counts come from this day's events. The details that are "
+                 "not in a regular feed (see <i>Rules and guide &rarr; The lapse process</i>) are listed so you know "
+                 "what to chase.")
+        n_cty = shown["country"].nunique()
+        n_flag = int((shown["flags"].astype(str).str.len() > 0).sum())
+        n_opt = int(shown["award_type"].isin(R.OPTION_LIKE).sum())
+        n_perf = int(shown["award_type"].isin(R.PERF_TYPES).sum())
+        cash_ppl = shown.loc[shown["settlement"] == "Cash", "employee_id"].nunique()
+        st.markdown(
+            '<div class="ck">'
+            f'<div><b>{shown["employee_id"].nunique():,} people</b>Brokerage account open and unrestricted '
+            '(needed to receive shares or proceeds)</div>'
+            f'<div><b>{n_cty} tax jurisdiction{"s" if n_cty != 1 else ""}</b>Where each person lives and works; '
+            'check for moves (mobility)</div>'
+            f'<div><b>{n_flag:,} flagged event{"s" if n_flag != 1 else ""}</b>Items marked for review, such as leave '
+            'of absence or missing data</div>'
+            f'<div><b>{cash_ppl:,} paid in cash</b>Payroll provider funds and holds year-to-date earnings for '
+            'tax caps</div>'
+            f'<div><b>{n_perf:,} performance payout{"s" if n_perf != 1 else ""}</b>Results must be approved before '
+            'the amount is known</div>'
+            f'<div><b>{n_opt:,} option / SAR event{"s" if n_opt != 1 else ""}</b>Value depends on the share price '
+            'against the strike</div>'
+            '</div>', unsafe_allow_html=True)
+
+        st.markdown("**Who and where**")
+        for key, title in (("country", "By country"), ("company", "By company"), ("award_type", "By award type")):
+            if is_whatif:
+                t = compare_table(cur_d, wi_d, key, "est_value_usd").sort_values("What-if", ascending=False)
+            else:
+                t = cur_d.groupby(key)["est_value_usd"].sum().sort_values(ascending=False).to_frame("Current")
+            with st.expander(title, expanded=(key == "country")):
+                st.dataframe(t.round(0).reset_index(), hide_index=True, use_container_width=True,
+                             column_config={c: st.column_config.NumberColumn(format="$%.0f") for c in t.columns})
+
+        if cmp_d:
+            diff_d = engine.diff_events(cur_d, wi_d)
+            if not diff_d.empty:
+                with st.expander(f"{len(diff_d):,} events moved, forfeited or accelerated on or from this day"):
+                    st.dataframe(diff_d, hide_index=True)
+        st.markdown("**Biggest events on this day**")
+        if shown.empty:
+            st.info("Nothing vests on this day in your what-if. It may have been moved or forfeited.")
+        else:
+            cards_with_open(shown.sort_values("est_value_usd", ascending=False).head(6), "ld", 1 if attr else 0)
 
 # ------------------------------------------------------------------ overview
 with tab_over:
+    tab_note("<b>The big picture.</b> How much vests month by month, what changed in your what-if, and where it vests.")
     st.markdown("**Vesting by month**")
     with st.expander("Chart options"):
         b1, b2 = st.columns(2)
@@ -1070,6 +1199,9 @@ with tab_over:
 
 # ------------------------------------------------------------------ events
 with tab_events:
+    tab_note("<b>Every vesting event</b> (one tranche of one grant) in the window, soonest lapse first. Use it to "
+             "export or check individual lines." + (" Choose 'Timing changes only' to see just what your what-if moved."
+                                                    if is_whatif else ""))
     show_changes = False
     if is_whatif:
         show_changes = st.radio("Show", ["All what-if events", "Timing changes only"], horizontal=True) \
@@ -1136,6 +1268,8 @@ with tab_events:
 
 # ------------------------------------------------------------------ people
 with tab_people:
+    tab_note("<b>Who is vesting.</b> One row per person for the window. Open a person to see every grant and the "
+             "full schedule behind it.")
     if ev.empty:
         st.info("No vesting events in this window.")
     else:
@@ -1175,9 +1309,16 @@ with tab_rules:
 
     if r_view == "Learn":
         topic = st.selectbox("What do you want to learn about?",
-                             ["Award types", "What-if events", "What happens to an award (treatments)",
+                             ["The lapse process", "Award types", "What-if events",
+                              "What happens to an award (treatments)",
                               "How the numbers are calculated", "Glossary"], key="g_topic")
-        if topic == "Award types":
+        if topic == "The lapse process":
+            explain_box("<b>The lapse</b> is the vest day. This is a plain-language outline of how the work around it "
+                        "runs. It is general, not any one company's process.")
+            for title, text in learn.LAPSE_PROCESS:
+                with st.expander(title, expanded=title.startswith("What a lapse")):
+                    st.markdown(md(text), unsafe_allow_html=True)
+        elif topic == "Award types":
             st.markdown("**At a glance**")
             st.dataframe(pd.DataFrame(
                 [{"Award type": a, "Paid in": v[0], "Value in this app": v[1], "Depends on performance": v[2],

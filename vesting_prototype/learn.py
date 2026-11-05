@@ -192,6 +192,41 @@ GLOSSARY = {
                                   "is still employed that day. Results can be fractional shares.",
 }
 
+LAPSE_PROCESS = [
+    ("What a lapse is",
+     "The lapse is the day restrictions end and an award pays out, so it is the same as the vest date. Equity teams call it "
+     "L-0. 'L-4' means four days before it, 'L+1' one day after. Everything the plan administrator does is counted from "
+     "that day."),
+    ("Pre-lapse (about L-4)",
+     "A few days ahead, the team collects the facts that do not change day to day and checks they are current: who is "
+     "vesting, how much, and what has to be true for each person. The goal is that on L-0 the calculation is a "
+     "run, not a research project. Speeding up this step is one of the main ways to speed up the whole lapse."),
+    ("Data that is not in the regular feed",
+     "A regular feed carries the grants and schedules. A few things change outside it and have to be refreshed "
+     "for the lapse: <b>mobility</b> (has the person moved country?), <b>tax jurisdiction</b> (where they live and work), "
+     "<b>leave of absence</b> (does vesting pause?), and <b>year-to-date earnings</b> (what has already been taxed this "
+     "year). The payroll provider is the source of record for year-to-date earnings."),
+    ("Why year-to-date earnings matter",
+     "Some taxes stop at a yearly cap. If a person has already paid up to the cap for a jurisdiction, no more of that "
+     "tax may be due on the vest. Without the payroll figure, withholding can be too high or too low."),
+    ("Brokerage account check",
+     "Shares or cash from a vest are delivered to the person's brokerage account. Before the lapse the account is "
+     "checked for restrictions of any kind, because a blocked account stops the delivery. After delivery the person can "
+     "move the proceeds elsewhere."),
+    ("Lapse day and after",
+     "On the lapse the vest is calculated, tax treatment is applied and the taxable event details are sent to the "
+     "sponsor (the company), payroll and other providers so they know how much to withhold. Sponsors then validate "
+     "the data, so how quickly they receive it matters a great deal."),
+    ("Why speed is hard",
+     "The volume is very large and the time is short, often hours. Many people, many companies, many countries, each "
+     "with its own tax rules. This app uses synthetic data and shows the shape of the work, not the real calculation. "
+     "Global tax treatment is out of scope here."),
+    ("How this app helps you explore it",
+     "The <i>Lapse day</i> tab shows one lapse date at a time: who and how much vests, what must be ready by L-4, and "
+     "how a what-if changes that day. The What-if builder changes the inputs, and the cards show L-numbers so you can "
+     "see how close each vest is."),
+]
+
 HOW_NUMBERS_WORK = [
     ("Share price on each vest date",
      "Starts from today's price. 'Flat' keeps it there, 'Growth' compounds it at an annual rate, and 'Range' adds a "

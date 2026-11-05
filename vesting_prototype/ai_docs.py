@@ -98,11 +98,11 @@ FLOWS = {
         "Answers: what changes if prices move, people leave or performance pays out differently?",
         [("s", "Switch the View to What-if"), ("d", "Quick start or build it?"),
          ("u", "Tap a preset (market down 20%, 15% attrition, PSUs pay 150%) or open the builder tabs"),
-         ("u", "Prices: pick a price path or shift today's price"), ("u", "Performance payout: set a payout % per company"),
+         ("u", "Share price: pick a price path or shift today's price"), ("u", "Performance payout: set a payout % per company"),
          ("u", "People and events: add attrition, a departure, death, disability, a violation or a leave"),
          ("a", "Rebuilds the schedule using the plan rules"),
          ("a", "Compares What-if with Current, with a bridge showing what moved the total"),
-         ("u", "Check Events for timing changes and the side-effects panel"), ("s", "Reset the what-if")]),
+         ("u", "Open Lapse day to compare one vest date, then Events for timing changes and the side-effects panel"), ("s", "Reset the what-if")]),
     "Dive into one person": (
         "Answers: what does this person hold and when does each piece vest?",
         [("s", "Overview: Up next"), ("u", "Tap Open next to a name (or pick someone in the People tab and tap Open full profile)"),
@@ -294,11 +294,16 @@ and lets you test what-if changes. All data is synthetic (8 companies, 980 peopl
 - **Filters** (a button; on a phone, tap it) narrows by company, country, department, award type, or a name or ID search.
   Active filters show as chips below. **Clear filters** resets them.
 
-**The five tabs:** Overview, Events, People, Rules and guide, Reports and data.
+**The six tabs:** Lapse day, Overview, Events, People, Rules and guide, Reports and data.
+
+**L-numbers.** Cards show how far away a vest is as *L-12*: twelve days before the lapse (vest) day. *L-0* is the day itself.
 """,
     "Current schedule": """
 **Headline.** The top card shows units and estimated value vesting in your window. The cards below split the value
 into **paid in shares** and **paid in cash**, and count events, people and companies.
+
+**Lapse day.** Pick one vest date. See value, people, events and how much is paid in shares or cash, a "Ready by L-4"
+checklist of what the team confirms beforehand, breakdowns by country, company and award type, and the biggest events.
 
 **Overview**
 - A monthly chart of what vests. Choose a horizon (12 to 48 months), measure (estimated value or units),
@@ -312,10 +317,12 @@ Flags on a card explain things like options below their strike price (underwater
 **People.** A table with one row per person in the window. Pick a person and tap **Open full profile**.
 """,
     "What-if": """
+**Three steps.** 1) Start with a quick scenario. 2) Fine-tune it in the tabs. 3) Read the impact on the **Lapse day** tab. A summary box under the settings shows your changes and what they do to the next lapse day.
+
 **Start fast.** Tap a preset: *Market down 20%*, *Market up 20%*, *15% attrition*, *PSUs pay 50%*, *PSUs pay 150%*.
 
 **Or build your own, in three tabs**
-1. **Prices.** Choose a price path (*Flat*, *Growth*, or *Range: bear, base, bull*) and shift today's price by -50% to
+1. **Share price.** Choose a price path (*Flat*, *Growth*, or *Range: bear, base, bull*) and shift today's price by -50% to
    +50%. Optionally use each company's own growth and volatility.
 2. **Performance payout.** Set how much PSUs and performance cash pay, per company, or set every company at once (0 to 200%).
 3. **People and events.** Set an assumed annual attrition (0 to 30%). Add an event for specific people or everyone in
@@ -340,7 +347,7 @@ filters, so **Back to overview** returns you where you were.
 In the What-if view the profile shows the what-if schedule for that person.
 """,
     "Rules and guide": """
-**Learn.** Pick a topic: award types, what-if events, what happens to an award (treatments), how the numbers are
+**Learn.** Pick a topic: the lapse process, award types, what-if events, what happens to an award (treatments), how the numbers are
 calculated, or the glossary. Open one award type to see a real example person.
 
 **Edit rules.** For each event (resignation, layoff, for-cause termination, retirement, death, disability, violation,
