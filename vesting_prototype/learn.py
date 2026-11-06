@@ -175,6 +175,8 @@ GLOSSARY = {
                               "tranche). One grant has many events.",
     "Vest / lapse / L-0": "The day the restriction ends and the award pays out. Equity teams also call it the lapse date, "
                           "and 'L-4' means four days before.",
+    "Business days": "Markets are closed on weekends, so a vest that would land on a Saturday or Sunday is moved to the "
+                     "next Monday in this data. Real plans set their own rule, and some use the previous business day.",
     "Settlement": "How the award is delivered: in shares or in cash. Cash awards need payroll funding on the payment date.",
     "Cliff": "A waiting period before anything vests. A one-year cliff means nothing vests in the first year, then a "
              "block vests on the first anniversary.",

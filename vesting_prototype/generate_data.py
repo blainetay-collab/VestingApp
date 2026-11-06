@@ -146,6 +146,14 @@ def px(ticker, d):
 
 
 # ---------- Grants & tranches ----------
+def next_business_day(d):
+    """Vest dates never fall on a weekend: a Saturday or Sunday moves to the following Monday."""
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    return d
+
+
+
 ticker_of = {c[0]: c[2] for c in COMPANIES}
 price_of = {c[0]: c[6] for c in COMPANIES}
 grants, tranches = [], []
@@ -167,6 +175,7 @@ for e in employees:
         gid = f"G{g:06d}"
         forfeited = False
         for vd, sh in gen_tranches(total, sched, gd):
+            vd = next_business_day(vd)
             t += 1
             if e["termination_date"] and vd > e["termination_date"]:
                 status, forfeited = "Forfeited", True
@@ -198,7 +207,7 @@ while True:
     pdate = (d0 + relativedelta(months=6)) - timedelta(days=1)
     if pdate > date(2028, 3, 31):
         break
-    OFFERINGS.append((d0, pdate))
+    OFFERINGS.append((d0, next_business_day(pdate)))
     d0 = d0 + relativedelta(months=6)
 for e in employees:
     if (e["employment_status"] != "Active" or e["country_code"] not in ESPP_COUNTRIES
