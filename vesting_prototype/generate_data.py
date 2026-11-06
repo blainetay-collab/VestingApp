@@ -13,7 +13,7 @@ import pandas as pd
 from dateutil.relativedelta import relativedelta
 
 SEED = 42
-AS_OF = date(2026, 11, 4)
+AS_OF = date(2026, 11, 6)
 OUT = Path(os.environ.get("VESTING_DATA_DIR") or Path(__file__).parent / "data")
 OUT.mkdir(exist_ok=True)
 random.seed(SEED)
