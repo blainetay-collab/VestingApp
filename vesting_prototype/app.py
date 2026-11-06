@@ -44,10 +44,21 @@ def find_data_dir() -> str:
                 and stamp in (d / "market_data.csv").read_text()):
             return str(d)
     gen = Path(tempfile.gettempdir()) / f"vesting_demo_data_{stamp or 'v3'}"
-    if not (gen / "companies.csv").exists():
+    # A folder is only trusted if the ".complete" marker is there. The data is built in a private folder and moved
+    # into place in one step, so two people opening the app at once (or a stopped run) can never leave a half-written file.
+    if not (gen / ".complete").exists():
+        import shutil
         with st.spinner("Generating the demo data (first load only, a few seconds)..."):
-            os.environ["VESTING_DATA_DIR"] = str(gen)
+            work = Path(tempfile.mkdtemp(prefix="vesting_build_"))
+            os.environ["VESTING_DATA_DIR"] = str(work)
             runpy.run_path(str(here / "generate_data.py"))
+            (work / ".complete").write_text("ok")
+            if gen.exists() and not (gen / ".complete").exists():
+                shutil.rmtree(gen, ignore_errors=True)       # leftover from an older, interrupted run
+            try:
+                os.rename(work, gen)
+            except OSError:                                    # someone else finished first; use theirs
+                shutil.rmtree(work, ignore_errors=True)
     return str(gen)
 
 
