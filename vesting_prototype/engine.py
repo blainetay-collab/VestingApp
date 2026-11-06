@@ -543,12 +543,14 @@ def whatif_steps(data: dict[str, pd.DataFrame], as_of, window_days: int, scenari
 # --------------------------------------------------------------------------
 # One employee: grant-by-grant view
 # --------------------------------------------------------------------------
-def grant_summary(data: dict[str, pd.DataFrame], employee_id: str, events: pd.DataFrame) -> pd.DataFrame:
+def grant_summary(data: dict[str, pd.DataFrame], employee_id: str, events: pd.DataFrame,
+                  tranches: pd.DataFrame | None = None) -> pd.DataFrame:
     """One row per grant for one person: how much has vested, is still to come, or was forfeited,
     plus the next vest. `events` is the upcoming-events table for the view being shown
     (current schedule or what-if); vested and forfeited history always comes from the stored data."""
     g = data["grants"][data["grants"]["employee_id"] == employee_id]
-    t = data["tranches"][data["tranches"]["employee_id"] == employee_id]
+    src = data["tranches"] if tranches is None else tranches
+    t = src[src["employee_id"] == employee_id]
     out = g[["grant_id", "award_type", "settlement", "ticker", "grant_date", "vesting_schedule_id", "total_shares",
              "strike_price", "expiry_date"]].copy().set_index("grant_id")
     for status, col in (("Vested", "vested_shares"), ("Forfeited", "forfeited_shares")):
@@ -571,10 +573,11 @@ def grant_summary(data: dict[str, pd.DataFrame], employee_id: str, events: pd.Da
     return out.reset_index().sort_values("grant_date").reset_index(drop=True)
 
 
-def employee_schedule(data: dict[str, pd.DataFrame], employee_id: str, events: pd.DataFrame) -> pd.DataFrame:
+def employee_schedule(data: dict[str, pd.DataFrame], employee_id: str, events: pd.DataFrame,
+                      tranches: pd.DataFrame | None = None) -> pd.DataFrame:
     """Every vesting event for one person on one timeline: past (Vested, Forfeited) from the stored data,
     upcoming from `events`. Status is Vested, Upcoming or Forfeited."""
-    t = data["tranches"]
+    t = data["tranches"] if tranches is None else tranches
     past = t[(t["employee_id"] == employee_id) & t["status"].isin(["Vested", "Forfeited"])][
         ["tranche_id", "grant_id", "vest_date", "shares_vesting", "status"]].copy()
     up = events[events["employee_id"] == employee_id][

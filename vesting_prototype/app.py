@@ -308,6 +308,15 @@ def get_whatif_events(data_dir: str, as_of, scenario, growth, vol, shock, attrit
                                   json.loads(payout_json) or None)
 
 
+@st.cache_data(show_spinner=False)
+def get_whatif_tranches(data_dir: str, actions_key, rules_json, emp_id):
+    """One person's stored vests after the what-if people events (so forfeited vests show as forfeited)."""
+    data = get_data(data_dir)
+    actions = [{"kind": k, "employee_ids": list(ids), "date": d, "months": m} for k, ids, d, m in actions_key]
+    tr = engine.apply_actions(data["tranches"], actions, data, json.loads(rules_json))
+    return tr[tr["employee_id"] == emp_id].copy()
+
+
 @st.cache_data(show_spinner="Working out what changed...")
 def get_bridge(data_dir: str, as_of, scenario, growth, vol, shock, attrition, actions_key, rules_json, payout_json):
     """Events after each what-if lever is applied in turn, trimmed to the columns the bridge needs."""
@@ -579,6 +588,8 @@ if is_whatif:
             kind = e1.selectbox("What happens", list(R.EVENTS), format_func=R.EVENTS.get, key="w_kind")
             ev_date = e2.date_input("From", value=(as_of_ts + pd.Timedelta(days=30)).date(), key="w_date")
             months = e3.number_input("Pause (months)", 1, 24, 3, key="w_months", disabled=(kind != "leave"))
+            st.caption("The event takes effect on the 'From' date. Vests on or before that date still happen; "
+                       "later ones follow the plan rules (for example, unvested awards are forfeited on a resignation).")
             info = learn.EVENTS[kind]
             explain_box(f"<b>{hx(R.EVENTS[kind])}.</b> {hx(info['what'])}<br><b>Typically:</b> {hx(info['typical'])}"
                         f"<br><b>Why it matters:</b> {hx(info['matters'])}")
@@ -697,9 +708,10 @@ def render_profile(emp_id: str):
     base_ev = wi_all if is_whatif else cur_all
     pe = base_ev[base_ev["employee_id"] == emp_id]
     ce = cur_all[cur_all["employee_id"] == emp_id]
-    gs = engine.grant_summary(data, emp_id, base_ev)
-    sched = engine.employee_schedule(data, emp_id, base_ev)
     changed = is_whatif and not neutral
+    tr_w = get_whatif_tranches(data_dir, actions_key, rules_json, emp_id) if (is_whatif and ss["actions"]) else None
+    gs = engine.grant_summary(data, emp_id, base_ev, tr_w)
+    sched = engine.employee_schedule(data, emp_id, base_ev, tr_w)
 
     st.button("← Back to overview", key="back_top", on_click=close_emp)
     st.markdown(f'<div class="hdr"><span class="hdr-t">{hx(e["full_name"])}</span>'
@@ -734,6 +746,17 @@ def render_profile(emp_id: str):
     ]), unsafe_allow_html=True)
     if changed:
         st.caption(md(f"Showing this person under your what-if: {levers}."))
+        mine = [x for x in ss["actions"] if emp_id in x["employee_ids"]]
+        if mine:
+            gone = ce[~ce["tranche_id"].isin(pe["tranche_id"])]
+            moved = engine.diff_events(ce, pe)
+            lines = ", ".join(f"{R.EVENT_SHORT[x['kind']]} from {x['date']}" for x in mine)
+            st.markdown(
+                f'<div class="scen"><span class="sk">Event applied to this person</span><br>{hx(lines)}.<br>'
+                f'{len(gone):,} upcoming vest{"s" if len(gone) != 1 else ""} no longer pay out '
+                f'({hx(money(gone["est_value_usd"].sum()))} in the current schedule). '
+                f'{len(pe):,} remain, worth {hx(money(pe["est_value_usd"].sum()))}.</div>'.replace("$", "&#36;"),
+                unsafe_allow_html=True)
 
     # dive-in tools
     all_grants = list(gs["grant_id"])
@@ -1283,8 +1306,12 @@ with tab_people:
         st.button("Open full profile", key="open_pick", on_click=open_emp, kwargs={"emp": pick},
                   use_container_width=True)
         emp_grants = data["grants"][data["grants"]["employee_id"] == pick]
-        st.write(f"{len(emp_grants)} grant(s), each on its own schedule")
-        st.dataframe(emp_grants, hide_index=True)
+        st.write(f"{len(emp_grants)} grant(s), each on its own schedule"
+                 + (" (upcoming amounts reflect your what-if)" if is_whatif else ""))
+        st.dataframe(engine.grant_summary(
+            data, pick, wi_all if is_whatif else cur_all,
+            get_whatif_tranches(data_dir, actions_key, rules_json, pick) if (is_whatif and ss["actions"]) else None),
+            hide_index=True)
         st.dataframe(ev[ev["employee_id"] == pick], hide_index=True)
 
 # ------------------------------------------------------------------ rules and guide
